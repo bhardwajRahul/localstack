@@ -1,5 +1,5 @@
 {
-  "tests/aws/services/cloudformation/resources/test_apigateway.py::test_cfn_deploy_apigateway_integration": {
+  "tests/aws/services/cloudformation/v2/ported_from_v1/resources/test_apigateway.py::test_cfn_deploy_apigateway_integration": {
     "recorded-date": "21-02-2024, 12:50:57",
     "recorded-content": {
       "rest_api": {
@@ -65,7 +65,7 @@
       }
     }
   },
-  "tests/aws/services/cloudformation/resources/test_apigateway.py::test_api_gateway_with_policy_as_dict": {
+  "tests/aws/services/cloudformation/v2/ported_from_v1/resources/test_apigateway.py::test_api_gateway_with_policy_as_dict": {
     "recorded-date": "15-04-2024, 22:59:53",
     "recorded-content": {
       "rest-api": {
@@ -106,21 +106,14 @@
       }
     }
   },
-  "tests/aws/services/cloudformation/resources/test_apigateway.py::test_cfn_deploy_apigateway_from_s3_swagger": {
-    "recorded-date": "06-05-2025, 18:31:54",
+  "tests/aws/services/cloudformation/v2/ported_from_v1/resources/test_apigateway.py::test_cfn_deploy_apigateway_from_s3_swagger": {
+    "recorded-date": "24-09-2024, 20:22:38",
     "recorded-content": {
       "rest-api": {
         "apiKeySource": "HEADER",
-        "binaryMediaTypes": [
-          "application/pdf",
-          "image/gif",
-          "image/jpg",
-          "image/png"
-        ],
         "createdDate": "datetime",
         "disableExecuteApiEndpoint": false,
         "endpointConfiguration": {
-          "ipAddressType": "ipv4",
           "types": [
             "REGIONAL"
           ]
@@ -209,7 +202,7 @@
       }
     }
   },
-  "tests/aws/services/cloudformation/resources/test_apigateway.py::test_cfn_deploy_apigateway_models": {
+  "tests/aws/services/cloudformation/v2/ported_from_v1/resources/test_apigateway.py::test_cfn_deploy_apigateway_models": {
     "recorded-date": "21-06-2024, 00:09:05",
     "recorded-content": {
       "get-resources": {
@@ -341,7 +334,7 @@
       }
     }
   },
-  "tests/aws/services/cloudformation/resources/test_apigateway.py::test_cfn_with_apigateway_resources": {
+  "tests/aws/services/cloudformation/v2/ported_from_v1/resources/test_apigateway.py::test_cfn_with_apigateway_resources": {
     "recorded-date": "20-06-2024, 23:54:26",
     "recorded-content": {
       "get-method-post": {
@@ -476,7 +469,7 @@
       }
     }
   },
-  "tests/aws/services/cloudformation/resources/test_apigateway.py::test_rest_api_serverless_ref_resolving": {
+  "tests/aws/services/cloudformation/v2/ported_from_v1/resources/test_apigateway.py::test_rest_api_serverless_ref_resolving": {
     "recorded-date": "06-07-2023, 21:01:08",
     "recorded-content": {
       "get-resources": {
@@ -577,7 +570,7 @@
       }
     }
   },
-  "tests/aws/services/cloudformation/resources/test_apigateway.py::test_update_usage_plan": {
+  "tests/aws/services/cloudformation/v2/ported_from_v1/resources/test_apigateway.py::test_update_usage_plan": {
     "recorded-date": "13-09-2024, 09:57:21",
     "recorded-content": {
       "usage-plan": {
@@ -634,7 +627,7 @@
       }
     }
   },
-  "tests/aws/services/cloudformation/resources/test_apigateway.py::test_update_apigateway_stage": {
+  "tests/aws/services/cloudformation/v2/ported_from_v1/resources/test_apigateway.py::test_update_apigateway_stage": {
     "recorded-date": "07-11-2024, 05:35:20",
     "recorded-content": {
       "created-stage": {
@@ -673,62 +666,6 @@
         "ResponseMetadata": {
           "HTTPHeaders": {},
           "HTTPStatusCode": 200
-        }
-      }
-    }
-  },
-  "tests/aws/services/cloudformation/resources/test_apigateway.py::test_cfn_apigateway_swagger_import": {
-    "recorded-date": "05-05-2025, 14:23:13",
-    "recorded-content": {
-      "imported-api": {
-        "apiKeySource": "HEADER",
-        "binaryMediaTypes": [
-          "*/*"
-        ],
-        "createdDate": "datetime",
-        "disableExecuteApiEndpoint": false,
-        "endpointConfiguration": {
-          "ipAddressType": "ipv4",
-          "types": [
-            "EDGE"
-          ]
-        },
-        "id": "<id:1>",
-        "name": "<name:1>",
-        "rootResourceId": "<root-resource-id:1>",
-        "tags": {
-          "aws:cloudformation:logical-id": "Api",
-          "aws:cloudformation:stack-id": "arn:<partition>:cloudformation:<region>:111111111111:stack/<aws:cloudformation:stack-name:1>/<resource:1>",
-          "aws:cloudformation:stack-name": "<aws:cloudformation:stack-name:1>"
-        },
-        "version": "1.0"
-      }
-    }
-  },
-  "tests/aws/services/cloudformation/resources/test_apigateway.py::test_cfn_apigateway_rest_api": {
-    "recorded-date": "05-05-2025, 14:50:14",
-    "recorded-content": {
-      "rest-api": {
-        "apiKeySource": "HEADER",
-        "binaryMediaTypes": [
-          "image/jpg",
-          "image/png"
-        ],
-        "createdDate": "datetime",
-        "disableExecuteApiEndpoint": false,
-        "endpointConfiguration": {
-          "ipAddressType": "ipv4",
-          "types": [
-            "EDGE"
-          ]
-        },
-        "id": "<id:1>",
-        "name": "DemoApi_dev",
-        "rootResourceId": "<root-resource-id:1>",
-        "tags": {
-          "aws:cloudformation:logical-id": "<aws:cloudformation:logical-id:1>",
-          "aws:cloudformation:stack-id": "arn:<partition>:cloudformation:<region>:111111111111:stack/<aws:cloudformation:stack-name:1>/<resource:1>",
-          "aws:cloudformation:stack-name": "<aws:cloudformation:stack-name:1>"
         }
       }
     }
