@@ -14,7 +14,11 @@ from botocore.exceptions import ClientError
 from localstack_snapshot.snapshots.transformer import SortingTransformer
 
 from localstack import config
-from localstack.aws.api.dynamodb import PointInTimeRecoverySpecification
+from localstack.aws.api.dynamodb import (
+    PointInTimeRecoverySpecification,
+    StreamSpecification,
+    StreamViewType,
+)
 from localstack.constants import AWS_REGION_US_EAST_1
 from localstack.services.dynamodbstreams.dynamodbstreams_api import get_kinesis_stream_name
 from localstack.testing.aws.lambda_utils import _await_dynamodb_table_active
@@ -33,6 +37,8 @@ TEST_DDB_TAGS = [
     {"Key": "Name", "Value": "test-table"},
     {"Key": "TestKey", "Value": "true"},
 ]
+
+WAIT_SEC = 10 if is_aws_cloud() else 1
 
 
 @pytest.fixture(autouse=True)
@@ -1130,6 +1136,156 @@ class TestDynamoDB:
         )
         response = dynamodb_ap_south_1.describe_table(TableName=table_name)
         assert "Replicas" not in response["Table"]
+
+    @markers.aws.validated
+    # An ARN stream has a stream label as suffix. In AWS, such a label differs between the stream of the original table
+    # and the ones of the replicas. In LocalStack, it does not differ. The only difference in the stream ARNs is the
+    # region. Therefore, we skip the following paths from the snapshots.
+    # However, we run plain assertions to make sure that the region changes in the ARNs, i.e., the replica have their
+    # own stream.
+    @markers.snapshot.skip_snapshot_verify(
+        paths=["$..Streams..StreamArn", "$..Streams..StreamLabel"]
+    )
+    def test_streams_on_global_tables(
+        self,
+        aws_client_factory,
+        wait_for_dynamodb_stream_ready,
+        cleanups,
+        snapshot,
+        region_name,
+        secondary_region_name,
+        dynamodbstreams_snapshot_transformers,
+    ):
+        """
+        This test exposes an issue in LocalStack with Global tables and streams. In AWS, each regional replica should
+        get a separate DynamoDB Stream. This does not happen in LocalStack since DynamoDB Stream does not have any
+        redirect logic towards the original region (unlike DDB).
+        """
+        region_1_factory = aws_client_factory(region_name=region_name)
+        region_2_factory = aws_client_factory(region_name=secondary_region_name)
+        snapshot.add_transformer(snapshot.transform.regex(secondary_region_name, "<region-2>"))
+
+        # Create table in the original region
+        table_name = f"table-{short_uid()}"
+        snapshot.add_transformer(snapshot.transform.regex(table_name, "<table-name>"))
+        region_1_factory.dynamodb.create_table(
+            TableName=table_name,
+            KeySchema=[
+                {"AttributeName": "Artist", "KeyType": "HASH"},
+                {"AttributeName": "SongTitle", "KeyType": "RANGE"},
+            ],
+            AttributeDefinitions=[
+                {"AttributeName": "Artist", "AttributeType": "S"},
+                {"AttributeName": "SongTitle", "AttributeType": "S"},
+            ],
+            BillingMode="PAY_PER_REQUEST",
+            StreamSpecification=StreamSpecification(
+                StreamEnabled=True, StreamViewType=StreamViewType.NEW_AND_OLD_IMAGES
+            ),
+        )
+        cleanups.append(lambda: region_1_factory.dynamodb.delete_table(TableName=table_name))
+        # Note: we might be unable to delete tables that act as source region immediately on AWS
+        waiter = region_1_factory.dynamodb.get_waiter("table_exists")
+        waiter.wait(TableName=table_name, WaiterConfig={"Delay": WAIT_SEC, "MaxAttempts": 20})
+        # Update the Table by adding a replica
+        region_1_factory.dynamodb.update_table(
+            TableName=table_name,
+            ReplicaUpdates=[{"Create": {"RegionName": secondary_region_name}}],
+        )
+        cleanups.append(lambda: region_2_factory.dynamodb.delete_table(TableName=table_name))
+        waiter = region_2_factory.dynamodb.get_waiter("table_exists")
+        waiter.wait(TableName=table_name, WaiterConfig={"Delay": WAIT_SEC, "MaxAttempts": 20})
+
+        stream_arn_region = region_1_factory.dynamodb.describe_table(TableName=table_name)["Table"][
+            "LatestStreamArn"
+        ]
+        assert region_name in stream_arn_region
+        wait_for_dynamodb_stream_ready(stream_arn_region)
+        stream_arn_secondary_region = region_2_factory.dynamodb.describe_table(
+            TableName=table_name
+        )["Table"]["LatestStreamArn"]
+        assert secondary_region_name in stream_arn_secondary_region
+        wait_for_dynamodb_stream_ready(
+            stream_arn_secondary_region, region_2_factory.dynamodbstreams
+        )
+
+        # Verify that we can list streams on both regions
+        streams_region_1 = region_1_factory.dynamodbstreams.list_streams(TableName=table_name)
+        snapshot.match("region-streams", streams_region_1)
+        assert region_name in streams_region_1["Streams"][0]["StreamArn"]
+        streams_region_2 = region_2_factory.dynamodbstreams.list_streams(TableName=table_name)
+        snapshot.match("secondary-region-streams", streams_region_2)
+        assert secondary_region_name in streams_region_2["Streams"][0]["StreamArn"]
+
+        region_1_factory.dynamodb.batch_write_item(
+            RequestItems={
+                table_name: [
+                    {
+                        "PutRequest": {
+                            "Item": {
+                                "Artist": {"S": "The Queen"},
+                                "SongTitle": {"S": "Bohemian Rhapsody"},
+                            }
+                        }
+                    },
+                    {
+                        "PutRequest": {
+                            "Item": {"Artist": {"S": "Oasis"}, "SongTitle": {"S": "Live Forever"}}
+                        }
+                    },
+                ]
+            }
+        )
+
+        def _read_records_from_shards(_stream_arn, _expected_record_count, _client) -> int:
+            describe_stream_result = _client.describe_stream(StreamArn=_stream_arn)
+            shard_id_to_iterator: dict[str, str] = {}
+            fetched_records = []
+            # Records can be spread over multiple shards. We need to read all over them
+            for stream_info in describe_stream_result["StreamDescription"]["Shards"]:
+                _shard_id = stream_info["ShardId"]
+                shard_iterator = _client.get_shard_iterator(
+                    StreamArn=_stream_arn, ShardId=_shard_id, ShardIteratorType="TRIM_HORIZON"
+                )["ShardIterator"]
+                shard_id_to_iterator[_shard_id] = shard_iterator
+
+            while len(fetched_records) < _expected_record_count and shard_id_to_iterator:
+                for _shard_id, _shard_iterator in list(shard_id_to_iterator.items()):
+                    _resp = _client.get_records(ShardIterator=_shard_iterator)
+                    fetched_records.extend(_resp["Records"])
+                    if next_shard_iterator := _resp.get("NextShardIterator"):
+                        shard_id_to_iterator[_shard_id] = next_shard_iterator
+                        continue
+                    shard_id_to_iterator.pop(_shard_id, None)
+            return fetched_records
+
+        def _assert_records(_stream_arn, _expected_count, _client) -> None:
+            records = _read_records_from_shards(
+                _stream_arn,
+                _expected_count,
+                _client,
+            )
+            assert len(records) == _expected_count, (
+                f"Expected {_expected_count} records, got {len(records)}"
+            )
+
+        retry(
+            _assert_records,
+            sleep=WAIT_SEC,
+            retries=20,
+            _stream_arn=stream_arn_region,
+            _expected_count=2,
+            _client=region_1_factory.dynamodbstreams,
+        )
+
+        retry(
+            _assert_records,
+            sleep=WAIT_SEC,
+            retries=20,
+            _stream_arn=stream_arn_secondary_region,
+            _expected_count=2,
+            _client=region_2_factory.dynamodbstreams,
+        )
 
     @markers.aws.only_localstack
     def test_global_tables(self, aws_client, ddb_test_table):

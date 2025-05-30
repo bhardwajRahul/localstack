@@ -7,6 +7,7 @@ from typing import Final, Optional
 from localstack.aws.api.cloudformation import ChangeAction, StackStatus
 from localstack.constants import INTERNAL_AWS_SECRET_ACCESS_KEY
 from localstack.services.cloudformation.engine.v2.change_set_model import (
+    NodeDependsOn,
     NodeOutput,
     NodeParameter,
     NodeResource,
@@ -38,18 +39,13 @@ class ChangeSetModelExecutorResult:
 
 
 class ChangeSetModelExecutor(ChangeSetModelPreproc):
-    _change_set: Final[ChangeSet]
     # TODO: add typing for resolved resources and parameters.
     resources: Final[dict]
     outputs: Final[dict]
     resolved_parameters: Final[dict]
 
     def __init__(self, change_set: ChangeSet):
-        super().__init__(
-            node_template=change_set.update_graph,
-            before_resolved_resources=change_set.stack.resolved_resources,
-        )
-        self._change_set = change_set
+        super().__init__(change_set=change_set)
         self.resources = dict()
         self.outputs = dict()
         self.resolved_parameters = dict()
@@ -66,11 +62,38 @@ class ChangeSetModelExecutor(ChangeSetModelPreproc):
         self.resolved_parameters[node_parameter.name] = delta.after
         return delta
 
-    def _after_resource_physical_id(self, resource_logical_id: str) -> Optional[str]:
+    def _after_deployed_property_value_of(
+        self, resource_logical_id: str, property_name: str
+    ) -> str:
+        after_resolved_resources = self.resources
+        return self._deployed_property_value_of(
+            resource_logical_id=resource_logical_id,
+            property_name=property_name,
+            resolved_resources=after_resolved_resources,
+        )
+
+    def _after_resource_physical_id(self, resource_logical_id: str) -> str:
         after_resolved_resources = self.resources
         return self._resource_physical_resource_id_from(
             logical_resource_id=resource_logical_id, resolved_resources=after_resolved_resources
         )
+
+    def visit_node_depends_on(self, node_depends_on: NodeDependsOn) -> PreprocEntityDelta:
+        array_identifiers_delta = super().visit_node_depends_on(node_depends_on=node_depends_on)
+
+        # Visit depends_on resources before returning.
+        depends_on_resource_logical_ids: set[str] = set()
+        if array_identifiers_delta.before:
+            depends_on_resource_logical_ids.update(array_identifiers_delta.before)
+        if array_identifiers_delta.after:
+            depends_on_resource_logical_ids.update(array_identifiers_delta.after)
+        for depends_on_resource_logical_id in depends_on_resource_logical_ids:
+            node_resource = self._get_node_resource_for(
+                resource_name=depends_on_resource_logical_id, node_template=self._node_template
+            )
+            self.visit_node_resource(node_resource)
+
+        return array_identifiers_delta
 
     def visit_node_resource(
         self, node_resource: NodeResource
