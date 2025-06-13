@@ -1,8 +1,11 @@
+import copy
 import logging
-from typing import Any
+from datetime import datetime, timezone
+from typing import Any, Optional
 
 from localstack.aws.api import RequestContext, handler
 from localstack.aws.api.cloudformation import (
+    Changes,
     ChangeSetNameOrId,
     ChangeSetNotFoundException,
     ChangeSetStatus,
@@ -13,25 +16,39 @@ from localstack.aws.api.cloudformation import (
     DeletionMode,
     DescribeChangeSetOutput,
     DescribeStackEventsOutput,
+    DescribeStackResourcesOutput,
     DescribeStacksOutput,
     DisableRollback,
     ExecuteChangeSetOutput,
     ExecutionStatus,
     IncludePropertyValues,
     InvalidChangeSetStatusException,
+    LogicalResourceId,
     NextToken,
     Parameter,
+    PhysicalResourceId,
     RetainExceptOnCreate,
     RetainResources,
     RoleARN,
+    RollbackConfiguration,
     StackName,
     StackNameOrId,
     StackStatus,
 )
 from localstack.services.cloudformation import api_utils
 from localstack.services.cloudformation.engine import template_preparer
+from localstack.services.cloudformation.engine.v2.change_set_model import (
+    ChangeSetModel,
+    NodeTemplate,
+)
+from localstack.services.cloudformation.engine.v2.change_set_model_describer import (
+    ChangeSetModelDescriber,
+)
 from localstack.services.cloudformation.engine.v2.change_set_model_executor import (
     ChangeSetModelExecutor,
+)
+from localstack.services.cloudformation.engine.v2.change_set_model_transform import (
+    ChangeSetModelTransform,
 )
 from localstack.services.cloudformation.engine.validations import ValidationError
 from localstack.services.cloudformation.provider import (
@@ -57,6 +74,25 @@ def is_changeset_arn(change_set_name_or_id: str) -> bool:
     return ARN_CHANGESET_REGEX.match(change_set_name_or_id) is not None
 
 
+def find_stack_v2(state: CloudFormationStore, stack_name: str | None) -> Stack:
+    if stack_name:
+        if is_stack_arn(stack_name):
+            return state.stacks_v2[stack_name]
+        else:
+            stack_candidates = []
+            for stack in state.stacks_v2.values():
+                if stack.stack_name == stack_name and stack.status != StackStatus.DELETE_COMPLETE:
+                    stack_candidates.append(stack)
+            if len(stack_candidates) == 0:
+                raise ValidationError(f"No stack with name {stack_name} found")
+            elif len(stack_candidates) > 1:
+                raise RuntimeError("Programing error, duplicate stacks found")
+            else:
+                return stack_candidates[0]
+    else:
+        raise NotImplementedError
+
+
 def find_change_set_v2(
     state: CloudFormationStore, change_set_name: str, stack_name: str | None = None
 ) -> ChangeSet | None:
@@ -73,7 +109,7 @@ def find_change_set_v2(
                     # TODO: check for active stacks
                     if (
                         stack_candidate.stack_name == stack_name
-                        and stack.status != StackStatus.DELETE_COMPLETE
+                        and stack_candidate.status != StackStatus.DELETE_COMPLETE
                     ):
                         stack = stack_candidate
                         break
@@ -93,6 +129,47 @@ def find_change_set_v2(
 
 
 class CloudformationProviderV2(CloudformationProvider):
+    @staticmethod
+    def _setup_change_set_model(
+        change_set: ChangeSet,
+        before_template: Optional[dict],
+        after_template: Optional[dict],
+        before_parameters: Optional[dict],
+        after_parameters: Optional[dict],
+    ):
+        # Create and preprocess the update graph for this template update.
+        change_set_model = ChangeSetModel(
+            before_template=before_template,
+            after_template=after_template,
+            before_parameters=before_parameters,
+            after_parameters=after_parameters,
+        )
+        raw_update_model: NodeTemplate = change_set_model.get_update_model()
+        change_set.set_update_model(raw_update_model)
+
+        # Apply global transforms.
+        # TODO: skip this process iff both versions of the template don't specify transform blocks.
+        change_set_model_transform = ChangeSetModelTransform(
+            change_set=change_set,
+            before_parameters=before_parameters,
+            after_parameters=after_parameters,
+            before_template=before_template,
+            after_template=after_template,
+        )
+        transformed_before_template, transformed_after_template = (
+            change_set_model_transform.transform()
+        )
+
+        # Remodel the update graph after the applying the global transforms.
+        change_set_model = ChangeSetModel(
+            before_template=transformed_before_template,
+            after_template=transformed_after_template,
+            before_parameters=before_parameters,
+            after_parameters=after_parameters,
+        )
+        update_model = change_set_model.get_update_model()
+        change_set.set_update_model(update_model)
+
     @handler("CreateChangeSet", expand=False)
     def create_change_set(
         self, context: RequestContext, request: CreateChangeSetInput
@@ -147,10 +224,10 @@ class CloudformationProviderV2(CloudformationProvider):
             # on a CREATE an empty Stack should be generated if we didn't find an active one
             if not active_stack_candidates and change_set_type == ChangeSetType.CREATE:
                 stack = Stack(
-                    context.account_id,
-                    context.region,
-                    request,
-                    structured_template,
+                    account_id=context.account_id,
+                    region_name=context.region,
+                    request_payload=request,
+                    template=structured_template,
                     template_body=template_body,
                 )
                 state.stacks_v2[stack.stack_id] = stack
@@ -212,15 +289,15 @@ class CloudformationProviderV2(CloudformationProvider):
         after_template = structured_template
 
         # create change set for the stack and apply changes
-        change_set = ChangeSet(stack, request)
-
-        # only set parameters for the changeset, then switch to stack on execute_change_set
-        change_set.populate_update_graph(
+        change_set = ChangeSet(stack, request, template=after_template)
+        self._setup_change_set_model(
+            change_set=change_set,
             before_template=before_template,
             after_template=after_template,
             before_parameters=before_parameters,
             after_parameters=after_parameters,
         )
+
         change_set.set_change_set_status(ChangeSetStatus.CREATE_COMPLETE)
         stack.change_set_id = change_set.change_set_id
         stack.change_set_id = change_set.change_set_id
@@ -256,7 +333,7 @@ class CloudformationProviderV2(CloudformationProvider):
         #     stack_name,
         #     len(change_set.template_resources),
         # )
-        if not change_set.update_graph:
+        if not change_set.update_model:
             raise RuntimeError("Programming error: no update graph found for change set")
 
         change_set.set_execution_status(ExecutionStatus.EXECUTE_IN_PROGRESS)
@@ -271,19 +348,66 @@ class CloudformationProviderV2(CloudformationProvider):
         )
 
         def _run(*args):
-            result = change_set_executor.execute()
-            new_stack_status = StackStatus.UPDATE_COMPLETE
-            if change_set.change_set_type == ChangeSetType.CREATE:
-                new_stack_status = StackStatus.CREATE_COMPLETE
-            change_set.stack.set_stack_status(new_stack_status)
-            change_set.set_execution_status(ExecutionStatus.EXECUTE_COMPLETE)
-            change_set.stack.resolved_resources = result.resources
-            change_set.stack.resolved_parameters = result.parameters
-            change_set.stack.resolved_outputs = result.outputs
+            try:
+                result = change_set_executor.execute()
+                new_stack_status = StackStatus.UPDATE_COMPLETE
+                if change_set.change_set_type == ChangeSetType.CREATE:
+                    new_stack_status = StackStatus.CREATE_COMPLETE
+                change_set.stack.set_stack_status(new_stack_status)
+                change_set.set_execution_status(ExecutionStatus.EXECUTE_COMPLETE)
+                change_set.stack.resolved_resources = result.resources
+                change_set.stack.resolved_parameters = result.parameters
+                change_set.stack.resolved_outputs = result.outputs
+                # if the deployment succeeded, update the stack's template representation to that
+                # which was just deployed
+                change_set.stack.template = change_set.template
+            except Exception as e:
+                LOG.error(
+                    "Execute change set failed: %s", e, exc_info=LOG.isEnabledFor(logging.WARNING)
+                )
+                new_stack_status = StackStatus.UPDATE_FAILED
+                if change_set.change_set_type == ChangeSetType.CREATE:
+                    new_stack_status = StackStatus.CREATE_FAILED
+
+                change_set.stack.set_stack_status(new_stack_status)
+                change_set.set_execution_status(ExecutionStatus.EXECUTE_FAILED)
 
         start_worker_thread(_run)
 
         return ExecuteChangeSetOutput()
+
+    def _describe_change_set(
+        self, change_set: ChangeSet, include_property_values: bool
+    ) -> DescribeChangeSetOutput:
+        # TODO: The ChangeSetModelDescriber currently matches AWS behavior by listing
+        #       resource changes in the order they appear in the template. However, when
+        #       a resource change is triggered indirectly (e.g., via Ref or GetAtt), the
+        #       dependency's change appears first in the list.
+        #       Snapshot tests using the `capture_update_process` fixture rely on a
+        #       normalizer to account for this ordering. This should be removed in the
+        #       future by enforcing a consistently correct change ordering at the source.
+        change_set_describer = ChangeSetModelDescriber(
+            change_set=change_set, include_property_values=include_property_values
+        )
+        changes: Changes = change_set_describer.get_changes()
+
+        result = DescribeChangeSetOutput(
+            Status=change_set.status,
+            ChangeSetId=change_set.change_set_id,
+            ChangeSetName=change_set.change_set_name,
+            ExecutionStatus=change_set.execution_status,
+            RollbackConfiguration=RollbackConfiguration(),
+            StackId=change_set.stack.stack_id,
+            StackName=change_set.stack.stack_name,
+            CreationTime=change_set.creation_time,
+            Parameters=[
+                # TODO: add masking support.
+                Parameter(ParameterKey=key, ParameterValue=value)
+                for (key, value) in change_set.stack.resolved_parameters.items()
+            ],
+            Changes=changes,
+        )
+        return result
 
     @handler("DescribeChangeSet")
     def describe_change_set(
@@ -301,9 +425,8 @@ class CloudformationProviderV2(CloudformationProvider):
         change_set = find_change_set_v2(state, change_set_name, stack_name)
         if not change_set:
             raise ChangeSetNotFoundException(f"ChangeSet [{change_set_name}] does not exist")
-
-        result = change_set.describe_details(
-            include_property_values=include_property_values or False
+        result = self._describe_change_set(
+            change_set=change_set, include_property_values=include_property_values or False
         )
         return result
 
@@ -316,27 +439,30 @@ class CloudformationProviderV2(CloudformationProvider):
         **kwargs,
     ) -> DescribeStacksOutput:
         state = get_cloudformation_store(context.account_id, context.region)
-        if stack_name:
-            if is_stack_arn(stack_name):
-                stack = state.stacks_v2[stack_name]
-            else:
-                stack_candidates = []
-                for stack in state.stacks_v2.values():
-                    if (
-                        stack.stack_name == stack_name
-                        and stack.status != StackStatus.DELETE_COMPLETE
-                    ):
-                        stack_candidates.append(stack)
-                if len(stack_candidates) == 0:
-                    raise ValidationError(f"No stack with name {stack_name} found")
-                elif len(stack_candidates) > 1:
-                    raise RuntimeError("Programing error, duplicate stacks found")
-                else:
-                    stack = stack_candidates[0]
-        else:
-            raise NotImplementedError
-
+        stack = find_stack_v2(state, stack_name)
         return DescribeStacksOutput(Stacks=[stack.describe_details()])
+
+    @handler("DescribeStackResources")
+    def describe_stack_resources(
+        self,
+        context: RequestContext,
+        stack_name: StackName = None,
+        logical_resource_id: LogicalResourceId = None,
+        physical_resource_id: PhysicalResourceId = None,
+        **kwargs,
+    ) -> DescribeStackResourcesOutput:
+        if physical_resource_id and stack_name:
+            raise ValidationError("Cannot specify both StackName and PhysicalResourceId")
+        state = get_cloudformation_store(context.account_id, context.region)
+        stack = find_stack_v2(state, stack_name)
+        # TODO: filter stack by PhysicalResourceId!
+        statuses = []
+        for resource_id, resource_status in stack.resource_states.items():
+            if resource_id == logical_resource_id or logical_resource_id is None:
+                status = copy.deepcopy(resource_status)
+                status.setdefault("DriftInformation", {"StackResourceDriftStatus": "NOT_CHECKED"})
+                statuses.append(status)
+        return DescribeStackResourcesOutput(StackResources=statuses)
 
     @handler("DescribeStackEvents")
     def describe_stack_events(
@@ -384,5 +510,38 @@ class CloudformationProviderV2(CloudformationProvider):
             # aws will silently ignore invalid stack names - we should do the same
             return
 
-        # TODO: actually delete
-        stack.set_stack_status(StackStatus.DELETE_COMPLETE)
+        # shortcut for stacks which have no deployed resources i.e. where a change set was
+        # created, but never executed
+        if stack.status == StackStatus.REVIEW_IN_PROGRESS and not stack.resolved_resources:
+            stack.set_stack_status(StackStatus.DELETE_COMPLETE)
+            stack.deletion_time = datetime.now(tz=timezone.utc)
+            return
+
+        # create a dummy change set
+        change_set = ChangeSet(stack, {"ChangeSetName": f"delete-stack_{stack.stack_name}"})  # noqa
+        self._setup_change_set_model(
+            change_set=change_set,
+            before_template=stack.template,
+            after_template=None,
+            before_parameters=stack.resolved_parameters,
+            after_parameters=None,
+        )
+
+        change_set_executor = ChangeSetModelExecutor(change_set)
+
+        def _run(*args):
+            try:
+                stack.set_stack_status(StackStatus.DELETE_IN_PROGRESS)
+                change_set_executor.execute()
+                stack.set_stack_status(StackStatus.DELETE_COMPLETE)
+                stack.deletion_time = datetime.now(tz=timezone.utc)
+            except Exception as e:
+                LOG.warning(
+                    "Failed to delete stack '%s': %s",
+                    stack.stack_name,
+                    e,
+                    exc_info=LOG.isEnabledFor(logging.DEBUG),
+                )
+                stack.set_stack_status(StackStatus.DELETE_FAILED)
+
+        start_worker_thread(_run)

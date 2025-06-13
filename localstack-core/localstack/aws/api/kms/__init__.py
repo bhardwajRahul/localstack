@@ -7,6 +7,8 @@ from localstack.aws.api import RequestContext, ServiceException, ServiceRequest,
 AWSAccountIdType = str
 AliasNameType = str
 ArnType = str
+BackingKeyIdResponseType = str
+BackingKeyIdType = str
 BooleanType = bool
 CloudHsmClusterIdType = str
 CustomKeyStoreIdType = str
@@ -19,6 +21,7 @@ GrantIdType = str
 GrantNameType = str
 GrantTokenType = str
 KeyIdType = str
+KeyMaterialDescriptionType = str
 KeyStorePasswordType = str
 LimitType = int
 MarkerType = str
@@ -150,6 +153,21 @@ class GrantOperation(StrEnum):
     DeriveSharedSecret = "DeriveSharedSecret"
 
 
+class ImportState(StrEnum):
+    IMPORTED = "IMPORTED"
+    PENDING_IMPORT = "PENDING_IMPORT"
+
+
+class ImportType(StrEnum):
+    NEW_KEY_MATERIAL = "NEW_KEY_MATERIAL"
+    EXISTING_KEY_MATERIAL = "EXISTING_KEY_MATERIAL"
+
+
+class IncludeKeyMaterial(StrEnum):
+    ALL_KEY_MATERIAL = "ALL_KEY_MATERIAL"
+    ROTATIONS_ONLY = "ROTATIONS_ONLY"
+
+
 class KeyAgreementAlgorithmSpec(StrEnum):
     ECDH = "ECDH"
 
@@ -161,6 +179,12 @@ class KeyEncryptionMechanism(StrEnum):
 class KeyManagerType(StrEnum):
     AWS = "AWS"
     CUSTOMER = "CUSTOMER"
+
+
+class KeyMaterialState(StrEnum):
+    NON_CURRENT = "NON_CURRENT"
+    CURRENT = "CURRENT"
+    PENDING_ROTATION = "PENDING_ROTATION"
 
 
 class KeySpec(StrEnum):
@@ -702,6 +726,7 @@ class KeyMetadata(TypedDict, total=False):
     PendingDeletionWindowInDays: Optional[PendingWindowInDaysType]
     MacAlgorithms: Optional[MacAlgorithmSpecList]
     XksKeyConfiguration: Optional[XksKeyConfigurationType]
+    CurrentKeyMaterialId: Optional[BackingKeyIdType]
 
 
 class CreateKeyResponse(TypedDict, total=False):
@@ -754,6 +779,7 @@ class DecryptResponse(TypedDict, total=False):
     Plaintext: Optional[PlaintextType]
     EncryptionAlgorithm: Optional[EncryptionAlgorithmSpec]
     CiphertextForRecipient: Optional[CiphertextType]
+    KeyMaterialId: Optional[BackingKeyIdType]
 
 
 class DeleteAliasRequest(ServiceRequest):
@@ -770,6 +796,12 @@ class DeleteCustomKeyStoreResponse(TypedDict, total=False):
 
 class DeleteImportedKeyMaterialRequest(ServiceRequest):
     KeyId: KeyIdType
+    KeyMaterialId: Optional[BackingKeyIdType]
+
+
+class DeleteImportedKeyMaterialResponse(TypedDict, total=False):
+    KeyId: Optional[KeyIdType]
+    KeyMaterialId: Optional[BackingKeyIdResponseType]
 
 
 PublicKeyType = bytes
@@ -870,6 +902,7 @@ class GenerateDataKeyPairResponse(TypedDict, total=False):
     KeyId: Optional[KeyIdType]
     KeyPairSpec: Optional[DataKeyPairSpec]
     CiphertextForRecipient: Optional[CiphertextType]
+    KeyMaterialId: Optional[BackingKeyIdType]
 
 
 class GenerateDataKeyPairWithoutPlaintextRequest(ServiceRequest):
@@ -885,6 +918,7 @@ class GenerateDataKeyPairWithoutPlaintextResponse(TypedDict, total=False):
     PublicKey: Optional[PublicKeyType]
     KeyId: Optional[KeyIdType]
     KeyPairSpec: Optional[DataKeyPairSpec]
+    KeyMaterialId: Optional[BackingKeyIdType]
 
 
 class GenerateDataKeyRequest(ServiceRequest):
@@ -902,6 +936,7 @@ class GenerateDataKeyResponse(TypedDict, total=False):
     Plaintext: Optional[PlaintextType]
     KeyId: Optional[KeyIdType]
     CiphertextForRecipient: Optional[CiphertextType]
+    KeyMaterialId: Optional[BackingKeyIdType]
 
 
 class GenerateDataKeyWithoutPlaintextRequest(ServiceRequest):
@@ -916,6 +951,7 @@ class GenerateDataKeyWithoutPlaintextRequest(ServiceRequest):
 class GenerateDataKeyWithoutPlaintextResponse(TypedDict, total=False):
     CiphertextBlob: Optional[CiphertextType]
     KeyId: Optional[KeyIdType]
+    KeyMaterialId: Optional[BackingKeyIdType]
 
 
 class GenerateMacRequest(ServiceRequest):
@@ -1015,10 +1051,14 @@ class ImportKeyMaterialRequest(ServiceRequest):
     EncryptedKeyMaterial: CiphertextType
     ValidTo: Optional[DateType]
     ExpirationModel: Optional[ExpirationModelType]
+    ImportType: Optional[ImportType]
+    KeyMaterialDescription: Optional[KeyMaterialDescriptionType]
+    KeyMaterialId: Optional[BackingKeyIdType]
 
 
 class ImportKeyMaterialResponse(TypedDict, total=False):
-    pass
+    KeyId: Optional[KeyIdType]
+    KeyMaterialId: Optional[BackingKeyIdType]
 
 
 class KeyListEntry(TypedDict, total=False):
@@ -1072,12 +1112,19 @@ class ListKeyPoliciesResponse(TypedDict, total=False):
 
 class ListKeyRotationsRequest(ServiceRequest):
     KeyId: KeyIdType
+    IncludeKeyMaterial: Optional[IncludeKeyMaterial]
     Limit: Optional[LimitType]
     Marker: Optional[MarkerType]
 
 
 class RotationsListEntry(TypedDict, total=False):
     KeyId: Optional[KeyIdType]
+    KeyMaterialId: Optional[BackingKeyIdType]
+    KeyMaterialDescription: Optional[KeyMaterialDescriptionType]
+    ImportState: Optional[ImportState]
+    KeyMaterialState: Optional[KeyMaterialState]
+    ExpirationModel: Optional[ExpirationModelType]
+    ValidTo: Optional[DateType]
     RotationDate: Optional[DateType]
     RotationType: Optional[RotationType]
 
@@ -1145,6 +1192,8 @@ class ReEncryptResponse(TypedDict, total=False):
     KeyId: Optional[KeyIdType]
     SourceEncryptionAlgorithm: Optional[EncryptionAlgorithmSpec]
     DestinationEncryptionAlgorithm: Optional[EncryptionAlgorithmSpec]
+    SourceKeyMaterialId: Optional[BackingKeyIdType]
+    DestinationKeyMaterialId: Optional[BackingKeyIdType]
 
 
 class ReplicateKeyRequest(ServiceRequest):
@@ -1312,15 +1361,15 @@ class KmsApi:
         self,
         context: RequestContext,
         custom_key_store_name: CustomKeyStoreNameType,
-        cloud_hsm_cluster_id: CloudHsmClusterIdType = None,
-        trust_anchor_certificate: TrustAnchorCertificateType = None,
-        key_store_password: KeyStorePasswordType = None,
-        custom_key_store_type: CustomKeyStoreType = None,
-        xks_proxy_uri_endpoint: XksProxyUriEndpointType = None,
-        xks_proxy_uri_path: XksProxyUriPathType = None,
-        xks_proxy_vpc_endpoint_service_name: XksProxyVpcEndpointServiceNameType = None,
-        xks_proxy_authentication_credential: XksProxyAuthenticationCredentialType = None,
-        xks_proxy_connectivity: XksProxyConnectivityType = None,
+        cloud_hsm_cluster_id: CloudHsmClusterIdType | None = None,
+        trust_anchor_certificate: TrustAnchorCertificateType | None = None,
+        key_store_password: KeyStorePasswordType | None = None,
+        custom_key_store_type: CustomKeyStoreType | None = None,
+        xks_proxy_uri_endpoint: XksProxyUriEndpointType | None = None,
+        xks_proxy_uri_path: XksProxyUriPathType | None = None,
+        xks_proxy_vpc_endpoint_service_name: XksProxyVpcEndpointServiceNameType | None = None,
+        xks_proxy_authentication_credential: XksProxyAuthenticationCredentialType | None = None,
+        xks_proxy_connectivity: XksProxyConnectivityType | None = None,
         **kwargs,
     ) -> CreateCustomKeyStoreResponse:
         raise NotImplementedError
@@ -1332,11 +1381,11 @@ class KmsApi:
         key_id: KeyIdType,
         grantee_principal: PrincipalIdType,
         operations: GrantOperationList,
-        retiring_principal: PrincipalIdType = None,
-        constraints: GrantConstraints = None,
-        grant_tokens: GrantTokenList = None,
-        name: GrantNameType = None,
-        dry_run: NullableBooleanType = None,
+        retiring_principal: PrincipalIdType | None = None,
+        constraints: GrantConstraints | None = None,
+        grant_tokens: GrantTokenList | None = None,
+        name: GrantNameType | None = None,
+        dry_run: NullableBooleanType | None = None,
         **kwargs,
     ) -> CreateGrantResponse:
         raise NotImplementedError
@@ -1345,17 +1394,17 @@ class KmsApi:
     def create_key(
         self,
         context: RequestContext,
-        policy: PolicyType = None,
-        description: DescriptionType = None,
-        key_usage: KeyUsageType = None,
-        customer_master_key_spec: CustomerMasterKeySpec = None,
-        key_spec: KeySpec = None,
-        origin: OriginType = None,
-        custom_key_store_id: CustomKeyStoreIdType = None,
-        bypass_policy_lockout_safety_check: BooleanType = None,
-        tags: TagList = None,
-        multi_region: NullableBooleanType = None,
-        xks_key_id: XksKeyIdType = None,
+        policy: PolicyType | None = None,
+        description: DescriptionType | None = None,
+        key_usage: KeyUsageType | None = None,
+        customer_master_key_spec: CustomerMasterKeySpec | None = None,
+        key_spec: KeySpec | None = None,
+        origin: OriginType | None = None,
+        custom_key_store_id: CustomKeyStoreIdType | None = None,
+        bypass_policy_lockout_safety_check: BooleanType | None = None,
+        tags: TagList | None = None,
+        multi_region: NullableBooleanType | None = None,
+        xks_key_id: XksKeyIdType | None = None,
         **kwargs,
     ) -> CreateKeyResponse:
         raise NotImplementedError
@@ -1365,12 +1414,12 @@ class KmsApi:
         self,
         context: RequestContext,
         ciphertext_blob: CiphertextType,
-        encryption_context: EncryptionContextType = None,
-        grant_tokens: GrantTokenList = None,
-        key_id: KeyIdType = None,
-        encryption_algorithm: EncryptionAlgorithmSpec = None,
-        recipient: RecipientInfo = None,
-        dry_run: NullableBooleanType = None,
+        encryption_context: EncryptionContextType | None = None,
+        grant_tokens: GrantTokenList | None = None,
+        key_id: KeyIdType | None = None,
+        encryption_algorithm: EncryptionAlgorithmSpec | None = None,
+        recipient: RecipientInfo | None = None,
+        dry_run: NullableBooleanType | None = None,
         **kwargs,
     ) -> DecryptResponse:
         raise NotImplementedError
@@ -1387,8 +1436,12 @@ class KmsApi:
 
     @handler("DeleteImportedKeyMaterial")
     def delete_imported_key_material(
-        self, context: RequestContext, key_id: KeyIdType, **kwargs
-    ) -> None:
+        self,
+        context: RequestContext,
+        key_id: KeyIdType,
+        key_material_id: BackingKeyIdType | None = None,
+        **kwargs,
+    ) -> DeleteImportedKeyMaterialResponse:
         raise NotImplementedError
 
     @handler("DeriveSharedSecret")
@@ -1398,9 +1451,9 @@ class KmsApi:
         key_id: KeyIdType,
         key_agreement_algorithm: KeyAgreementAlgorithmSpec,
         public_key: PublicKeyType,
-        grant_tokens: GrantTokenList = None,
-        dry_run: NullableBooleanType = None,
-        recipient: RecipientInfo = None,
+        grant_tokens: GrantTokenList | None = None,
+        dry_run: NullableBooleanType | None = None,
+        recipient: RecipientInfo | None = None,
         **kwargs,
     ) -> DeriveSharedSecretResponse:
         raise NotImplementedError
@@ -1409,10 +1462,10 @@ class KmsApi:
     def describe_custom_key_stores(
         self,
         context: RequestContext,
-        custom_key_store_id: CustomKeyStoreIdType = None,
-        custom_key_store_name: CustomKeyStoreNameType = None,
-        limit: LimitType = None,
-        marker: MarkerType = None,
+        custom_key_store_id: CustomKeyStoreIdType | None = None,
+        custom_key_store_name: CustomKeyStoreNameType | None = None,
+        limit: LimitType | None = None,
+        marker: MarkerType | None = None,
         **kwargs,
     ) -> DescribeCustomKeyStoresResponse:
         raise NotImplementedError
@@ -1422,7 +1475,7 @@ class KmsApi:
         self,
         context: RequestContext,
         key_id: KeyIdType,
-        grant_tokens: GrantTokenList = None,
+        grant_tokens: GrantTokenList | None = None,
         **kwargs,
     ) -> DescribeKeyResponse:
         raise NotImplementedError
@@ -1450,7 +1503,7 @@ class KmsApi:
         self,
         context: RequestContext,
         key_id: KeyIdType,
-        rotation_period_in_days: RotationPeriodInDaysType = None,
+        rotation_period_in_days: RotationPeriodInDaysType | None = None,
         **kwargs,
     ) -> None:
         raise NotImplementedError
@@ -1461,10 +1514,10 @@ class KmsApi:
         context: RequestContext,
         key_id: KeyIdType,
         plaintext: PlaintextType,
-        encryption_context: EncryptionContextType = None,
-        grant_tokens: GrantTokenList = None,
-        encryption_algorithm: EncryptionAlgorithmSpec = None,
-        dry_run: NullableBooleanType = None,
+        encryption_context: EncryptionContextType | None = None,
+        grant_tokens: GrantTokenList | None = None,
+        encryption_algorithm: EncryptionAlgorithmSpec | None = None,
+        dry_run: NullableBooleanType | None = None,
         **kwargs,
     ) -> EncryptResponse:
         raise NotImplementedError
@@ -1474,12 +1527,12 @@ class KmsApi:
         self,
         context: RequestContext,
         key_id: KeyIdType,
-        encryption_context: EncryptionContextType = None,
-        number_of_bytes: NumberOfBytesType = None,
-        key_spec: DataKeySpec = None,
-        grant_tokens: GrantTokenList = None,
-        recipient: RecipientInfo = None,
-        dry_run: NullableBooleanType = None,
+        encryption_context: EncryptionContextType | None = None,
+        number_of_bytes: NumberOfBytesType | None = None,
+        key_spec: DataKeySpec | None = None,
+        grant_tokens: GrantTokenList | None = None,
+        recipient: RecipientInfo | None = None,
+        dry_run: NullableBooleanType | None = None,
         **kwargs,
     ) -> GenerateDataKeyResponse:
         raise NotImplementedError
@@ -1490,10 +1543,10 @@ class KmsApi:
         context: RequestContext,
         key_id: KeyIdType,
         key_pair_spec: DataKeyPairSpec,
-        encryption_context: EncryptionContextType = None,
-        grant_tokens: GrantTokenList = None,
-        recipient: RecipientInfo = None,
-        dry_run: NullableBooleanType = None,
+        encryption_context: EncryptionContextType | None = None,
+        grant_tokens: GrantTokenList | None = None,
+        recipient: RecipientInfo | None = None,
+        dry_run: NullableBooleanType | None = None,
         **kwargs,
     ) -> GenerateDataKeyPairResponse:
         raise NotImplementedError
@@ -1504,9 +1557,9 @@ class KmsApi:
         context: RequestContext,
         key_id: KeyIdType,
         key_pair_spec: DataKeyPairSpec,
-        encryption_context: EncryptionContextType = None,
-        grant_tokens: GrantTokenList = None,
-        dry_run: NullableBooleanType = None,
+        encryption_context: EncryptionContextType | None = None,
+        grant_tokens: GrantTokenList | None = None,
+        dry_run: NullableBooleanType | None = None,
         **kwargs,
     ) -> GenerateDataKeyPairWithoutPlaintextResponse:
         raise NotImplementedError
@@ -1516,11 +1569,11 @@ class KmsApi:
         self,
         context: RequestContext,
         key_id: KeyIdType,
-        encryption_context: EncryptionContextType = None,
-        key_spec: DataKeySpec = None,
-        number_of_bytes: NumberOfBytesType = None,
-        grant_tokens: GrantTokenList = None,
-        dry_run: NullableBooleanType = None,
+        encryption_context: EncryptionContextType | None = None,
+        key_spec: DataKeySpec | None = None,
+        number_of_bytes: NumberOfBytesType | None = None,
+        grant_tokens: GrantTokenList | None = None,
+        dry_run: NullableBooleanType | None = None,
         **kwargs,
     ) -> GenerateDataKeyWithoutPlaintextResponse:
         raise NotImplementedError
@@ -1532,8 +1585,8 @@ class KmsApi:
         message: PlaintextType,
         key_id: KeyIdType,
         mac_algorithm: MacAlgorithmSpec,
-        grant_tokens: GrantTokenList = None,
-        dry_run: NullableBooleanType = None,
+        grant_tokens: GrantTokenList | None = None,
+        dry_run: NullableBooleanType | None = None,
         **kwargs,
     ) -> GenerateMacResponse:
         raise NotImplementedError
@@ -1542,9 +1595,9 @@ class KmsApi:
     def generate_random(
         self,
         context: RequestContext,
-        number_of_bytes: NumberOfBytesType = None,
-        custom_key_store_id: CustomKeyStoreIdType = None,
-        recipient: RecipientInfo = None,
+        number_of_bytes: NumberOfBytesType | None = None,
+        custom_key_store_id: CustomKeyStoreIdType | None = None,
+        recipient: RecipientInfo | None = None,
         **kwargs,
     ) -> GenerateRandomResponse:
         raise NotImplementedError
@@ -1554,7 +1607,7 @@ class KmsApi:
         self,
         context: RequestContext,
         key_id: KeyIdType,
-        policy_name: PolicyNameType = None,
+        policy_name: PolicyNameType | None = None,
         **kwargs,
     ) -> GetKeyPolicyResponse:
         raise NotImplementedError
@@ -1581,7 +1634,7 @@ class KmsApi:
         self,
         context: RequestContext,
         key_id: KeyIdType,
-        grant_tokens: GrantTokenList = None,
+        grant_tokens: GrantTokenList | None = None,
         **kwargs,
     ) -> GetPublicKeyResponse:
         raise NotImplementedError
@@ -1593,8 +1646,11 @@ class KmsApi:
         key_id: KeyIdType,
         import_token: CiphertextType,
         encrypted_key_material: CiphertextType,
-        valid_to: DateType = None,
-        expiration_model: ExpirationModelType = None,
+        valid_to: DateType | None = None,
+        expiration_model: ExpirationModelType | None = None,
+        import_type: ImportType | None = None,
+        key_material_description: KeyMaterialDescriptionType | None = None,
+        key_material_id: BackingKeyIdType | None = None,
         **kwargs,
     ) -> ImportKeyMaterialResponse:
         raise NotImplementedError
@@ -1603,9 +1659,9 @@ class KmsApi:
     def list_aliases(
         self,
         context: RequestContext,
-        key_id: KeyIdType = None,
-        limit: LimitType = None,
-        marker: MarkerType = None,
+        key_id: KeyIdType | None = None,
+        limit: LimitType | None = None,
+        marker: MarkerType | None = None,
         **kwargs,
     ) -> ListAliasesResponse:
         raise NotImplementedError
@@ -1615,10 +1671,10 @@ class KmsApi:
         self,
         context: RequestContext,
         key_id: KeyIdType,
-        limit: LimitType = None,
-        marker: MarkerType = None,
-        grant_id: GrantIdType = None,
-        grantee_principal: PrincipalIdType = None,
+        limit: LimitType | None = None,
+        marker: MarkerType | None = None,
+        grant_id: GrantIdType | None = None,
+        grantee_principal: PrincipalIdType | None = None,
         **kwargs,
     ) -> ListGrantsResponse:
         raise NotImplementedError
@@ -1628,8 +1684,8 @@ class KmsApi:
         self,
         context: RequestContext,
         key_id: KeyIdType,
-        limit: LimitType = None,
-        marker: MarkerType = None,
+        limit: LimitType | None = None,
+        marker: MarkerType | None = None,
         **kwargs,
     ) -> ListKeyPoliciesResponse:
         raise NotImplementedError
@@ -1639,15 +1695,20 @@ class KmsApi:
         self,
         context: RequestContext,
         key_id: KeyIdType,
-        limit: LimitType = None,
-        marker: MarkerType = None,
+        include_key_material: IncludeKeyMaterial | None = None,
+        limit: LimitType | None = None,
+        marker: MarkerType | None = None,
         **kwargs,
     ) -> ListKeyRotationsResponse:
         raise NotImplementedError
 
     @handler("ListKeys")
     def list_keys(
-        self, context: RequestContext, limit: LimitType = None, marker: MarkerType = None, **kwargs
+        self,
+        context: RequestContext,
+        limit: LimitType | None = None,
+        marker: MarkerType | None = None,
+        **kwargs,
     ) -> ListKeysResponse:
         raise NotImplementedError
 
@@ -1656,8 +1717,8 @@ class KmsApi:
         self,
         context: RequestContext,
         key_id: KeyIdType,
-        limit: LimitType = None,
-        marker: MarkerType = None,
+        limit: LimitType | None = None,
+        marker: MarkerType | None = None,
         **kwargs,
     ) -> ListResourceTagsResponse:
         raise NotImplementedError
@@ -1667,8 +1728,8 @@ class KmsApi:
         self,
         context: RequestContext,
         retiring_principal: PrincipalIdType,
-        limit: LimitType = None,
-        marker: MarkerType = None,
+        limit: LimitType | None = None,
+        marker: MarkerType | None = None,
         **kwargs,
     ) -> ListGrantsResponse:
         raise NotImplementedError
@@ -1679,8 +1740,8 @@ class KmsApi:
         context: RequestContext,
         key_id: KeyIdType,
         policy: PolicyType,
-        policy_name: PolicyNameType = None,
-        bypass_policy_lockout_safety_check: BooleanType = None,
+        policy_name: PolicyNameType | None = None,
+        bypass_policy_lockout_safety_check: BooleanType | None = None,
         **kwargs,
     ) -> None:
         raise NotImplementedError
@@ -1691,13 +1752,13 @@ class KmsApi:
         context: RequestContext,
         ciphertext_blob: CiphertextType,
         destination_key_id: KeyIdType,
-        source_encryption_context: EncryptionContextType = None,
-        source_key_id: KeyIdType = None,
-        destination_encryption_context: EncryptionContextType = None,
-        source_encryption_algorithm: EncryptionAlgorithmSpec = None,
-        destination_encryption_algorithm: EncryptionAlgorithmSpec = None,
-        grant_tokens: GrantTokenList = None,
-        dry_run: NullableBooleanType = None,
+        source_encryption_context: EncryptionContextType | None = None,
+        source_key_id: KeyIdType | None = None,
+        destination_encryption_context: EncryptionContextType | None = None,
+        source_encryption_algorithm: EncryptionAlgorithmSpec | None = None,
+        destination_encryption_algorithm: EncryptionAlgorithmSpec | None = None,
+        grant_tokens: GrantTokenList | None = None,
+        dry_run: NullableBooleanType | None = None,
         **kwargs,
     ) -> ReEncryptResponse:
         raise NotImplementedError
@@ -1708,10 +1769,10 @@ class KmsApi:
         context: RequestContext,
         key_id: KeyIdType,
         replica_region: RegionType,
-        policy: PolicyType = None,
-        bypass_policy_lockout_safety_check: BooleanType = None,
-        description: DescriptionType = None,
-        tags: TagList = None,
+        policy: PolicyType | None = None,
+        bypass_policy_lockout_safety_check: BooleanType | None = None,
+        description: DescriptionType | None = None,
+        tags: TagList | None = None,
         **kwargs,
     ) -> ReplicateKeyResponse:
         raise NotImplementedError
@@ -1720,10 +1781,10 @@ class KmsApi:
     def retire_grant(
         self,
         context: RequestContext,
-        grant_token: GrantTokenType = None,
-        key_id: KeyIdType = None,
-        grant_id: GrantIdType = None,
-        dry_run: NullableBooleanType = None,
+        grant_token: GrantTokenType | None = None,
+        key_id: KeyIdType | None = None,
+        grant_id: GrantIdType | None = None,
+        dry_run: NullableBooleanType | None = None,
         **kwargs,
     ) -> None:
         raise NotImplementedError
@@ -1734,7 +1795,7 @@ class KmsApi:
         context: RequestContext,
         key_id: KeyIdType,
         grant_id: GrantIdType,
-        dry_run: NullableBooleanType = None,
+        dry_run: NullableBooleanType | None = None,
         **kwargs,
     ) -> None:
         raise NotImplementedError
@@ -1750,7 +1811,7 @@ class KmsApi:
         self,
         context: RequestContext,
         key_id: KeyIdType,
-        pending_window_in_days: PendingWindowInDaysType = None,
+        pending_window_in_days: PendingWindowInDaysType | None = None,
         **kwargs,
     ) -> ScheduleKeyDeletionResponse:
         raise NotImplementedError
@@ -1762,9 +1823,9 @@ class KmsApi:
         key_id: KeyIdType,
         message: PlaintextType,
         signing_algorithm: SigningAlgorithmSpec,
-        message_type: MessageType = None,
-        grant_tokens: GrantTokenList = None,
-        dry_run: NullableBooleanType = None,
+        message_type: MessageType | None = None,
+        grant_tokens: GrantTokenList | None = None,
+        dry_run: NullableBooleanType | None = None,
         **kwargs,
     ) -> SignResponse:
         raise NotImplementedError
@@ -1792,14 +1853,14 @@ class KmsApi:
         self,
         context: RequestContext,
         custom_key_store_id: CustomKeyStoreIdType,
-        new_custom_key_store_name: CustomKeyStoreNameType = None,
-        key_store_password: KeyStorePasswordType = None,
-        cloud_hsm_cluster_id: CloudHsmClusterIdType = None,
-        xks_proxy_uri_endpoint: XksProxyUriEndpointType = None,
-        xks_proxy_uri_path: XksProxyUriPathType = None,
-        xks_proxy_vpc_endpoint_service_name: XksProxyVpcEndpointServiceNameType = None,
-        xks_proxy_authentication_credential: XksProxyAuthenticationCredentialType = None,
-        xks_proxy_connectivity: XksProxyConnectivityType = None,
+        new_custom_key_store_name: CustomKeyStoreNameType | None = None,
+        key_store_password: KeyStorePasswordType | None = None,
+        cloud_hsm_cluster_id: CloudHsmClusterIdType | None = None,
+        xks_proxy_uri_endpoint: XksProxyUriEndpointType | None = None,
+        xks_proxy_uri_path: XksProxyUriPathType | None = None,
+        xks_proxy_vpc_endpoint_service_name: XksProxyVpcEndpointServiceNameType | None = None,
+        xks_proxy_authentication_credential: XksProxyAuthenticationCredentialType | None = None,
+        xks_proxy_connectivity: XksProxyConnectivityType | None = None,
         **kwargs,
     ) -> UpdateCustomKeyStoreResponse:
         raise NotImplementedError
@@ -1824,9 +1885,9 @@ class KmsApi:
         message: PlaintextType,
         signature: CiphertextType,
         signing_algorithm: SigningAlgorithmSpec,
-        message_type: MessageType = None,
-        grant_tokens: GrantTokenList = None,
-        dry_run: NullableBooleanType = None,
+        message_type: MessageType | None = None,
+        grant_tokens: GrantTokenList | None = None,
+        dry_run: NullableBooleanType | None = None,
         **kwargs,
     ) -> VerifyResponse:
         raise NotImplementedError
@@ -1839,8 +1900,8 @@ class KmsApi:
         key_id: KeyIdType,
         mac_algorithm: MacAlgorithmSpec,
         mac: CiphertextType,
-        grant_tokens: GrantTokenList = None,
-        dry_run: NullableBooleanType = None,
+        grant_tokens: GrantTokenList | None = None,
+        dry_run: NullableBooleanType | None = None,
         **kwargs,
     ) -> VerifyMacResponse:
         raise NotImplementedError

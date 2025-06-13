@@ -1,17 +1,17 @@
 from datetime import datetime, timezone
-from typing import TypedDict
+from typing import Optional, TypedDict
 
 from localstack.aws.api.cloudformation import (
-    Changes,
     ChangeSetStatus,
     ChangeSetType,
     CreateChangeSetInput,
-    DescribeChangeSetOutput,
     ExecutionStatus,
     Output,
     Parameter,
+    ResourceStatus,
     StackDriftInformation,
     StackDriftStatus,
+    StackResource,
     StackStatus,
     StackStatusReason,
 )
@@ -23,11 +23,7 @@ from localstack.services.cloudformation.engine.entities import (
     StackTemplate,
 )
 from localstack.services.cloudformation.engine.v2.change_set_model import (
-    ChangeSetModel,
     NodeTemplate,
-)
-from localstack.services.cloudformation.engine.v2.change_set_model_describer import (
-    ChangeSetModelDescriber,
 )
 from localstack.utils.aws import arns
 from localstack.utils.strings import short_uid
@@ -46,11 +42,13 @@ class Stack:
     status_reason: StackStatusReason | None
     stack_id: str
     creation_time: datetime
+    deletion_time: datetime | None
 
     # state after deploy
     resolved_parameters: dict[str, str]
     resolved_resources: dict[str, ResolvedResource]
     resolved_outputs: dict[str, str]
+    resource_states: dict[str, StackResource]
 
     def __init__(
         self,
@@ -69,6 +67,7 @@ class Stack:
         self.status_reason = None
         self.change_set_ids = change_set_ids or []
         self.creation_time = datetime.now(tz=timezone.utc)
+        self.deletion_time = None
 
         self.stack_name = request_payload["StackName"]
         self.change_set_name = request_payload.get("ChangeSetName")
@@ -89,16 +88,38 @@ class Stack:
         self.resolved_parameters = {}
         self.resolved_resources = {}
         self.resolved_outputs = {}
+        self.resource_states = {}
 
     def set_stack_status(self, status: StackStatus, reason: StackStatusReason | None = None):
         self.status = status
         if reason:
             self.status_reason = reason
 
+    def set_resource_status(
+        self,
+        *,
+        logical_resource_id: str,
+        physical_resource_id: str | None,
+        resource_type: str,
+        status: ResourceStatus,
+        resource_status_reason: str | None = None,
+    ):
+        self.resource_states[logical_resource_id] = StackResource(
+            StackName=self.stack_name,
+            StackId=self.stack_id,
+            LogicalResourceId=logical_resource_id,
+            PhysicalResourceId=physical_resource_id,
+            ResourceType=resource_type,
+            Timestamp=datetime.now(tz=timezone.utc),
+            ResourceStatus=status,
+            ResourceStatusReason=resource_status_reason,
+        )
+
     def describe_details(self) -> ApiStack:
         result = {
             "ChangeSetId": self.change_set_id,
             "CreationTime": self.creation_time,
+            "DeletionTime": self.deletion_time,
             "StackId": self.stack_id,
             "StackName": self.stack_name,
             "StackStatus": self.status,
@@ -132,7 +153,7 @@ class ChangeSet:
     change_set_name: str
     change_set_id: str
     change_set_type: ChangeSetType
-    update_graph: NodeTemplate | None
+    update_model: Optional[NodeTemplate]
     status: ChangeSetStatus
     execution_status: ExecutionStatus
     creation_time: datetime
@@ -147,7 +168,7 @@ class ChangeSet:
         self.template = template
         self.status = ChangeSetStatus.CREATE_IN_PROGRESS
         self.execution_status = ExecutionStatus.AVAILABLE
-        self.update_graph = None
+        self.update_model = None
         self.creation_time = datetime.now(tz=timezone.utc)
 
         self.change_set_name = request_payload["ChangeSetName"]
@@ -158,6 +179,9 @@ class ChangeSet:
             account_id=self.stack.account_id,
             region_name=self.stack.region_name,
         )
+
+    def set_update_model(self, update_model: NodeTemplate) -> None:
+        self.update_model = update_model
 
     def set_change_set_status(self, status: ChangeSetStatus):
         self.status = status
@@ -172,50 +196,3 @@ class ChangeSet:
     @property
     def region_name(self) -> str:
         return self.stack.region_name
-
-    def populate_update_graph(
-        self,
-        before_template: dict | None = None,
-        after_template: dict | None = None,
-        before_parameters: dict | None = None,
-        after_parameters: dict | None = None,
-    ) -> None:
-        change_set_model = ChangeSetModel(
-            before_template=before_template,
-            after_template=after_template,
-            before_parameters=before_parameters,
-            after_parameters=after_parameters,
-        )
-        self.update_graph = change_set_model.get_update_model()
-
-    def describe_details(self, include_property_values: bool) -> DescribeChangeSetOutput:
-        change_set_describer = ChangeSetModelDescriber(
-            node_template=self.update_graph,
-            before_resolved_resources=self.stack.resolved_resources,
-            include_property_values=include_property_values,
-        )
-        changes: Changes = change_set_describer.get_changes()
-
-        result = {
-            "Status": self.status,
-            "ChangeSetType": self.change_set_type,
-            "ChangeSetId": self.change_set_id,
-            "ChangeSetName": self.change_set_name,
-            "ExecutionStatus": self.execution_status,
-            "RollbackConfiguration": {},
-            "StackId": self.stack.stack_id,
-            "StackName": self.stack.stack_name,
-            "StackStatus": self.stack.status,
-            "CreationTime": self.creation_time,
-            "LastUpdatedTime": "",
-            "DisableRollback": "",
-            "EnableTerminationProtection": "",
-            "Transform": "",
-            # TODO: mask no echo
-            "Parameters": [
-                Parameter(ParameterKey=key, ParameterValue=value)
-                for (key, value) in self.stack.resolved_parameters.items()
-            ],
-            "Changes": changes,
-        }
-        return result
