@@ -277,6 +277,10 @@ def is_windows() -> bool:
     return platform.system().lower() == "windows"
 
 
+def is_wsl() -> bool:
+    return platform.system().lower() == "linux" and os.environ.get("WSL_DISTRO_NAME") is not None
+
+
 def ping(host):
     """Returns True if the host responds to a ping request"""
     is_in_windows = is_windows()
@@ -384,6 +388,8 @@ OVERRIDE_IN_DOCKER = parse_boolean_env("OVERRIDE_IN_DOCKER")
 is_in_docker = in_docker()
 is_in_linux = is_linux()
 is_in_macos = is_macos()
+is_in_windows = is_windows()
+is_in_wsl = is_wsl()
 default_ip = "0.0.0.0" if is_in_docker else "127.0.0.1"
 
 # CLI specific: the configuration profile to load
@@ -441,6 +447,9 @@ LAMBDA_DEBUG_MODE = is_env_true("LAMBDA_DEBUG_MODE")
 
 # path to the lambda debug mode configuration file.
 LAMBDA_DEBUG_MODE_CONFIG_PATH = os.environ.get("LAMBDA_DEBUG_MODE_CONFIG_PATH")
+
+# EXPERIMENTAL: allow setting custom log levels for individual loggers
+LOG_LEVEL_OVERRIDES = os.environ.get("LOG_LEVEL_OVERRIDES", "")
 
 # whether to enable debugpy
 DEVELOP = is_env_true("DEVELOP")
@@ -896,6 +905,20 @@ KINESIS_MOCK_LOG_LEVEL = os.environ.get("KINESIS_MOCK_LOG_LEVEL", "").strip()
 # randomly inject faults to Kinesis
 KINESIS_ERROR_PROBABILITY = float(os.environ.get("KINESIS_ERROR_PROBABILITY", "").strip() or 0.0)
 
+# SEMI-PUBLIC: "node" (default); not actively communicated
+# Select whether to use the node or scala build when running Kinesis Mock
+KINESIS_MOCK_PROVIDER_ENGINE = os.environ.get("KINESIS_MOCK_PROVIDER_ENGINE", "").strip() or "node"
+
+# set the maximum Java heap size corresponding to the '-Xmx<size>' flag
+KINESIS_MOCK_MAXIMUM_HEAP_SIZE = (
+    os.environ.get("KINESIS_MOCK_MAXIMUM_HEAP_SIZE", "").strip() or "512m"
+)
+
+# set the initial Java heap size corresponding to the '-Xms<size>' flag
+KINESIS_MOCK_INITIAL_HEAP_SIZE = (
+    os.environ.get("KINESIS_MOCK_INITIAL_HEAP_SIZE", "").strip() or "256m"
+)
+
 # randomly inject faults to DynamoDB
 DYNAMODB_ERROR_PROBABILITY = float(os.environ.get("DYNAMODB_ERROR_PROBABILITY", "").strip() or 0.0)
 DYNAMODB_READ_ERROR_PROBABILITY = float(
@@ -989,6 +1012,7 @@ LAMBDA_RUNTIME_ENVIRONMENT_TIMEOUT = int(os.environ.get("LAMBDA_RUNTIME_ENVIRONM
 # a) pattern with <runtime> placeholder, e.g. custom-repo/lambda-<runtime>:2022
 # b) json dict mapping the <runtime> to an image, e.g. {"python3.9": "custom-repo/lambda-py:thon3.9"}
 LAMBDA_RUNTIME_IMAGE_MAPPING = os.environ.get("LAMBDA_RUNTIME_IMAGE_MAPPING", "").strip()
+
 
 # PUBLIC: 0 (default)
 # Whether to disable usage of deprecated runtimes
@@ -1227,6 +1251,9 @@ DISTRIBUTED_MODE = is_env_true("DISTRIBUTED_MODE")
 # This flag enables `connect_to` to be in-memory only and not do networking calls
 IN_MEMORY_CLIENT = is_env_true("IN_MEMORY_CLIENT")
 
+# This flag enables all responses from LocalStack to contain a `x-localstack` HTTP header.
+LOCALSTACK_RESPONSE_HEADER_ENABLED = is_env_not_false("LOCALSTACK_RESPONSE_HEADER_ENABLED")
+
 # List of environment variable names used for configuration that are passed from the host into the LocalStack container.
 # => Synchronize this list with the above and the configuration docs:
 # https://docs.localstack.cloud/references/configuration/
@@ -1333,6 +1360,7 @@ CONFIG_ENV_VARS = [
     "LOCALSTACK_API_KEY",
     "LOCALSTACK_AUTH_TOKEN",
     "LOCALSTACK_HOST",
+    "LOCALSTACK_RESPONSE_HEADER_ENABLED",
     "LOG_LICENSE_ISSUES",
     "LS_LOG",
     "MAIN_CONTAINER_NAME",

@@ -26,6 +26,7 @@ ChecksumCRC32C = str
 ChecksumCRC64NVME = str
 ChecksumSHA1 = str
 ChecksumSHA256 = str
+ClientToken = str
 CloudFunction = str
 CloudFunctionInvocationRole = str
 Code = str
@@ -133,6 +134,9 @@ QuoteEscapeCharacter = str
 Range = str
 RecordDelimiter = str
 Region = str
+RenameSource = str
+RenameSourceIfMatch = str
+RenameSourceIfNoneMatch = str
 ReplaceKeyPrefixWith = str
 ReplaceKeyWith = str
 ReplicaKmsKeyID = str
@@ -648,6 +652,12 @@ class BucketAlreadyOwnedByYou(ServiceException):
 
 class EncryptionTypeMismatch(ServiceException):
     code: str = "EncryptionTypeMismatch"
+    sender_fault: bool = False
+    status_code: int = 400
+
+
+class IdempotencyParameterMismatch(ServiceException):
+    code: str = "IdempotencyParameterMismatch"
     sender_fault: bool = False
     status_code: int = 400
 
@@ -1643,6 +1653,7 @@ class DeleteBucketEncryptionRequest(ServiceRequest):
 class DeleteBucketIntelligentTieringConfigurationRequest(ServiceRequest):
     Bucket: BucketName
     Id: IntelligentTieringId
+    ExpectedBucketOwner: Optional[AccountId]
 
 
 class DeleteBucketInventoryConfigurationRequest(ServiceRequest):
@@ -1952,6 +1963,7 @@ class GetBucketIntelligentTieringConfigurationOutput(TypedDict, total=False):
 class GetBucketIntelligentTieringConfigurationRequest(ServiceRequest):
     Bucket: BucketName
     Id: IntelligentTieringId
+    ExpectedBucketOwner: Optional[AccountId]
 
 
 class InventorySchedule(TypedDict, total=False):
@@ -2557,6 +2569,7 @@ class HeadObjectOutput(TypedDict, total=False):
     RequestCharged: Optional[RequestCharged]
     ReplicationStatus: Optional[ReplicationStatus]
     PartsCount: Optional[PartsCount]
+    TagCount: Optional[TagCount]
     ObjectLockMode: Optional[ObjectLockMode]
     ObjectLockRetainUntilDate: Optional[ObjectLockRetainUntilDate]
     ObjectLockLegalHoldStatus: Optional[ObjectLockLegalHoldStatus]
@@ -2663,6 +2676,7 @@ class ListBucketIntelligentTieringConfigurationsOutput(TypedDict, total=False):
 class ListBucketIntelligentTieringConfigurationsRequest(ServiceRequest):
     Bucket: BucketName
     ContinuationToken: Optional[Token]
+    ExpectedBucketOwner: Optional[AccountId]
 
 
 class ListBucketInventoryConfigurationsOutput(TypedDict, total=False):
@@ -3074,6 +3088,7 @@ class PutBucketEncryptionRequest(ServiceRequest):
 class PutBucketIntelligentTieringConfigurationRequest(ServiceRequest):
     Bucket: BucketName
     Id: IntelligentTieringId
+    ExpectedBucketOwner: Optional[AccountId]
     IntelligentTieringConfiguration: IntelligentTieringConfiguration
 
 
@@ -3139,6 +3154,7 @@ class PutBucketOwnershipControlsRequest(ServiceRequest):
     ContentMD5: Optional[ContentMD5]
     ExpectedBucketOwner: Optional[AccountId]
     OwnershipControls: OwnershipControls
+    ChecksumAlgorithm: Optional[ChecksumAlgorithm]
 
 
 class PutBucketPolicyRequest(ServiceRequest):
@@ -3366,6 +3382,29 @@ class PutPublicAccessBlockRequest(ServiceRequest):
 
 class RecordsEvent(TypedDict, total=False):
     Payload: Optional[Body]
+
+
+class RenameObjectOutput(TypedDict, total=False):
+    pass
+
+
+RenameSourceIfUnmodifiedSince = datetime
+RenameSourceIfModifiedSince = datetime
+
+
+class RenameObjectRequest(ServiceRequest):
+    Bucket: BucketName
+    Key: ObjectKey
+    RenameSource: RenameSource
+    DestinationIfMatch: Optional[IfMatch]
+    DestinationIfNoneMatch: Optional[IfNoneMatch]
+    DestinationIfModifiedSince: Optional[IfModifiedSince]
+    DestinationIfUnmodifiedSince: Optional[IfUnmodifiedSince]
+    SourceIfMatch: Optional[RenameSourceIfMatch]
+    SourceIfNoneMatch: Optional[RenameSourceIfNoneMatch]
+    SourceIfModifiedSince: Optional[RenameSourceIfModifiedSince]
+    SourceIfUnmodifiedSince: Optional[RenameSourceIfUnmodifiedSince]
+    ClientToken: Optional[ClientToken]
 
 
 class RequestProgress(TypedDict, total=False):
@@ -3604,9 +3643,9 @@ class S3Api:
         bucket: BucketName,
         key: ObjectKey,
         upload_id: MultipartUploadId,
-        request_payer: RequestPayer = None,
-        expected_bucket_owner: AccountId = None,
-        if_match_initiated_time: IfMatchInitiatedTime = None,
+        request_payer: RequestPayer | None = None,
+        expected_bucket_owner: AccountId | None = None,
+        if_match_initiated_time: IfMatchInitiatedTime | None = None,
         **kwargs,
     ) -> AbortMultipartUploadOutput:
         raise NotImplementedError
@@ -3618,21 +3657,21 @@ class S3Api:
         bucket: BucketName,
         key: ObjectKey,
         upload_id: MultipartUploadId,
-        multipart_upload: CompletedMultipartUpload = None,
-        checksum_crc32: ChecksumCRC32 = None,
-        checksum_crc32_c: ChecksumCRC32C = None,
-        checksum_crc64_nvme: ChecksumCRC64NVME = None,
-        checksum_sha1: ChecksumSHA1 = None,
-        checksum_sha256: ChecksumSHA256 = None,
-        checksum_type: ChecksumType = None,
-        mpu_object_size: MpuObjectSize = None,
-        request_payer: RequestPayer = None,
-        expected_bucket_owner: AccountId = None,
-        if_match: IfMatch = None,
-        if_none_match: IfNoneMatch = None,
-        sse_customer_algorithm: SSECustomerAlgorithm = None,
-        sse_customer_key: SSECustomerKey = None,
-        sse_customer_key_md5: SSECustomerKeyMD5 = None,
+        multipart_upload: CompletedMultipartUpload | None = None,
+        checksum_crc32: ChecksumCRC32 | None = None,
+        checksum_crc32_c: ChecksumCRC32C | None = None,
+        checksum_crc64_nvme: ChecksumCRC64NVME | None = None,
+        checksum_sha1: ChecksumSHA1 | None = None,
+        checksum_sha256: ChecksumSHA256 | None = None,
+        checksum_type: ChecksumType | None = None,
+        mpu_object_size: MpuObjectSize | None = None,
+        request_payer: RequestPayer | None = None,
+        expected_bucket_owner: AccountId | None = None,
+        if_match: IfMatch | None = None,
+        if_none_match: IfNoneMatch | None = None,
+        sse_customer_algorithm: SSECustomerAlgorithm | None = None,
+        sse_customer_key: SSECustomerKey | None = None,
+        sse_customer_key_md5: SSECustomerKeyMD5 | None = None,
         **kwargs,
     ) -> CompleteMultipartUploadOutput:
         raise NotImplementedError
@@ -3644,44 +3683,44 @@ class S3Api:
         bucket: BucketName,
         copy_source: CopySource,
         key: ObjectKey,
-        acl: ObjectCannedACL = None,
-        cache_control: CacheControl = None,
-        checksum_algorithm: ChecksumAlgorithm = None,
-        content_disposition: ContentDisposition = None,
-        content_encoding: ContentEncoding = None,
-        content_language: ContentLanguage = None,
-        content_type: ContentType = None,
-        copy_source_if_match: CopySourceIfMatch = None,
-        copy_source_if_modified_since: CopySourceIfModifiedSince = None,
-        copy_source_if_none_match: CopySourceIfNoneMatch = None,
-        copy_source_if_unmodified_since: CopySourceIfUnmodifiedSince = None,
-        expires: Expires = None,
-        grant_full_control: GrantFullControl = None,
-        grant_read: GrantRead = None,
-        grant_read_acp: GrantReadACP = None,
-        grant_write_acp: GrantWriteACP = None,
-        metadata: Metadata = None,
-        metadata_directive: MetadataDirective = None,
-        tagging_directive: TaggingDirective = None,
-        server_side_encryption: ServerSideEncryption = None,
-        storage_class: StorageClass = None,
-        website_redirect_location: WebsiteRedirectLocation = None,
-        sse_customer_algorithm: SSECustomerAlgorithm = None,
-        sse_customer_key: SSECustomerKey = None,
-        sse_customer_key_md5: SSECustomerKeyMD5 = None,
-        ssekms_key_id: SSEKMSKeyId = None,
-        ssekms_encryption_context: SSEKMSEncryptionContext = None,
-        bucket_key_enabled: BucketKeyEnabled = None,
-        copy_source_sse_customer_algorithm: CopySourceSSECustomerAlgorithm = None,
-        copy_source_sse_customer_key: CopySourceSSECustomerKey = None,
-        copy_source_sse_customer_key_md5: CopySourceSSECustomerKeyMD5 = None,
-        request_payer: RequestPayer = None,
-        tagging: TaggingHeader = None,
-        object_lock_mode: ObjectLockMode = None,
-        object_lock_retain_until_date: ObjectLockRetainUntilDate = None,
-        object_lock_legal_hold_status: ObjectLockLegalHoldStatus = None,
-        expected_bucket_owner: AccountId = None,
-        expected_source_bucket_owner: AccountId = None,
+        acl: ObjectCannedACL | None = None,
+        cache_control: CacheControl | None = None,
+        checksum_algorithm: ChecksumAlgorithm | None = None,
+        content_disposition: ContentDisposition | None = None,
+        content_encoding: ContentEncoding | None = None,
+        content_language: ContentLanguage | None = None,
+        content_type: ContentType | None = None,
+        copy_source_if_match: CopySourceIfMatch | None = None,
+        copy_source_if_modified_since: CopySourceIfModifiedSince | None = None,
+        copy_source_if_none_match: CopySourceIfNoneMatch | None = None,
+        copy_source_if_unmodified_since: CopySourceIfUnmodifiedSince | None = None,
+        expires: Expires | None = None,
+        grant_full_control: GrantFullControl | None = None,
+        grant_read: GrantRead | None = None,
+        grant_read_acp: GrantReadACP | None = None,
+        grant_write_acp: GrantWriteACP | None = None,
+        metadata: Metadata | None = None,
+        metadata_directive: MetadataDirective | None = None,
+        tagging_directive: TaggingDirective | None = None,
+        server_side_encryption: ServerSideEncryption | None = None,
+        storage_class: StorageClass | None = None,
+        website_redirect_location: WebsiteRedirectLocation | None = None,
+        sse_customer_algorithm: SSECustomerAlgorithm | None = None,
+        sse_customer_key: SSECustomerKey | None = None,
+        sse_customer_key_md5: SSECustomerKeyMD5 | None = None,
+        ssekms_key_id: SSEKMSKeyId | None = None,
+        ssekms_encryption_context: SSEKMSEncryptionContext | None = None,
+        bucket_key_enabled: BucketKeyEnabled | None = None,
+        copy_source_sse_customer_algorithm: CopySourceSSECustomerAlgorithm | None = None,
+        copy_source_sse_customer_key: CopySourceSSECustomerKey | None = None,
+        copy_source_sse_customer_key_md5: CopySourceSSECustomerKeyMD5 | None = None,
+        request_payer: RequestPayer | None = None,
+        tagging: TaggingHeader | None = None,
+        object_lock_mode: ObjectLockMode | None = None,
+        object_lock_retain_until_date: ObjectLockRetainUntilDate | None = None,
+        object_lock_legal_hold_status: ObjectLockLegalHoldStatus | None = None,
+        expected_bucket_owner: AccountId | None = None,
+        expected_source_bucket_owner: AccountId | None = None,
         **kwargs,
     ) -> CopyObjectOutput:
         raise NotImplementedError
@@ -3691,15 +3730,15 @@ class S3Api:
         self,
         context: RequestContext,
         bucket: BucketName,
-        acl: BucketCannedACL = None,
-        create_bucket_configuration: CreateBucketConfiguration = None,
-        grant_full_control: GrantFullControl = None,
-        grant_read: GrantRead = None,
-        grant_read_acp: GrantReadACP = None,
-        grant_write: GrantWrite = None,
-        grant_write_acp: GrantWriteACP = None,
-        object_lock_enabled_for_bucket: ObjectLockEnabledForBucket = None,
-        object_ownership: ObjectOwnership = None,
+        acl: BucketCannedACL | None = None,
+        create_bucket_configuration: CreateBucketConfiguration | None = None,
+        grant_full_control: GrantFullControl | None = None,
+        grant_read: GrantRead | None = None,
+        grant_read_acp: GrantReadACP | None = None,
+        grant_write: GrantWrite | None = None,
+        grant_write_acp: GrantWriteACP | None = None,
+        object_lock_enabled_for_bucket: ObjectLockEnabledForBucket | None = None,
+        object_ownership: ObjectOwnership | None = None,
         **kwargs,
     ) -> CreateBucketOutput:
         raise NotImplementedError
@@ -3710,9 +3749,9 @@ class S3Api:
         context: RequestContext,
         bucket: BucketName,
         metadata_table_configuration: MetadataTableConfiguration,
-        content_md5: ContentMD5 = None,
-        checksum_algorithm: ChecksumAlgorithm = None,
-        expected_bucket_owner: AccountId = None,
+        content_md5: ContentMD5 | None = None,
+        checksum_algorithm: ChecksumAlgorithm | None = None,
+        expected_bucket_owner: AccountId | None = None,
         **kwargs,
     ) -> None:
         raise NotImplementedError
@@ -3723,35 +3762,35 @@ class S3Api:
         context: RequestContext,
         bucket: BucketName,
         key: ObjectKey,
-        acl: ObjectCannedACL = None,
-        cache_control: CacheControl = None,
-        content_disposition: ContentDisposition = None,
-        content_encoding: ContentEncoding = None,
-        content_language: ContentLanguage = None,
-        content_type: ContentType = None,
-        expires: Expires = None,
-        grant_full_control: GrantFullControl = None,
-        grant_read: GrantRead = None,
-        grant_read_acp: GrantReadACP = None,
-        grant_write_acp: GrantWriteACP = None,
-        metadata: Metadata = None,
-        server_side_encryption: ServerSideEncryption = None,
-        storage_class: StorageClass = None,
-        website_redirect_location: WebsiteRedirectLocation = None,
-        sse_customer_algorithm: SSECustomerAlgorithm = None,
-        sse_customer_key: SSECustomerKey = None,
-        sse_customer_key_md5: SSECustomerKeyMD5 = None,
-        ssekms_key_id: SSEKMSKeyId = None,
-        ssekms_encryption_context: SSEKMSEncryptionContext = None,
-        bucket_key_enabled: BucketKeyEnabled = None,
-        request_payer: RequestPayer = None,
-        tagging: TaggingHeader = None,
-        object_lock_mode: ObjectLockMode = None,
-        object_lock_retain_until_date: ObjectLockRetainUntilDate = None,
-        object_lock_legal_hold_status: ObjectLockLegalHoldStatus = None,
-        expected_bucket_owner: AccountId = None,
-        checksum_algorithm: ChecksumAlgorithm = None,
-        checksum_type: ChecksumType = None,
+        acl: ObjectCannedACL | None = None,
+        cache_control: CacheControl | None = None,
+        content_disposition: ContentDisposition | None = None,
+        content_encoding: ContentEncoding | None = None,
+        content_language: ContentLanguage | None = None,
+        content_type: ContentType | None = None,
+        expires: Expires | None = None,
+        grant_full_control: GrantFullControl | None = None,
+        grant_read: GrantRead | None = None,
+        grant_read_acp: GrantReadACP | None = None,
+        grant_write_acp: GrantWriteACP | None = None,
+        metadata: Metadata | None = None,
+        server_side_encryption: ServerSideEncryption | None = None,
+        storage_class: StorageClass | None = None,
+        website_redirect_location: WebsiteRedirectLocation | None = None,
+        sse_customer_algorithm: SSECustomerAlgorithm | None = None,
+        sse_customer_key: SSECustomerKey | None = None,
+        sse_customer_key_md5: SSECustomerKeyMD5 | None = None,
+        ssekms_key_id: SSEKMSKeyId | None = None,
+        ssekms_encryption_context: SSEKMSEncryptionContext | None = None,
+        bucket_key_enabled: BucketKeyEnabled | None = None,
+        request_payer: RequestPayer | None = None,
+        tagging: TaggingHeader | None = None,
+        object_lock_mode: ObjectLockMode | None = None,
+        object_lock_retain_until_date: ObjectLockRetainUntilDate | None = None,
+        object_lock_legal_hold_status: ObjectLockLegalHoldStatus | None = None,
+        expected_bucket_owner: AccountId | None = None,
+        checksum_algorithm: ChecksumAlgorithm | None = None,
+        checksum_type: ChecksumType | None = None,
         **kwargs,
     ) -> CreateMultipartUploadOutput:
         raise NotImplementedError
@@ -3761,11 +3800,11 @@ class S3Api:
         self,
         context: RequestContext,
         bucket: BucketName,
-        session_mode: SessionMode = None,
-        server_side_encryption: ServerSideEncryption = None,
-        ssekms_key_id: SSEKMSKeyId = None,
-        ssekms_encryption_context: SSEKMSEncryptionContext = None,
-        bucket_key_enabled: BucketKeyEnabled = None,
+        session_mode: SessionMode | None = None,
+        server_side_encryption: ServerSideEncryption | None = None,
+        ssekms_key_id: SSEKMSKeyId | None = None,
+        ssekms_encryption_context: SSEKMSEncryptionContext | None = None,
+        bucket_key_enabled: BucketKeyEnabled | None = None,
         **kwargs,
     ) -> CreateSessionOutput:
         raise NotImplementedError
@@ -3775,7 +3814,7 @@ class S3Api:
         self,
         context: RequestContext,
         bucket: BucketName,
-        expected_bucket_owner: AccountId = None,
+        expected_bucket_owner: AccountId | None = None,
         **kwargs,
     ) -> None:
         raise NotImplementedError
@@ -3786,7 +3825,7 @@ class S3Api:
         context: RequestContext,
         bucket: BucketName,
         id: AnalyticsId,
-        expected_bucket_owner: AccountId = None,
+        expected_bucket_owner: AccountId | None = None,
         **kwargs,
     ) -> None:
         raise NotImplementedError
@@ -3796,7 +3835,7 @@ class S3Api:
         self,
         context: RequestContext,
         bucket: BucketName,
-        expected_bucket_owner: AccountId = None,
+        expected_bucket_owner: AccountId | None = None,
         **kwargs,
     ) -> None:
         raise NotImplementedError
@@ -3806,14 +3845,19 @@ class S3Api:
         self,
         context: RequestContext,
         bucket: BucketName,
-        expected_bucket_owner: AccountId = None,
+        expected_bucket_owner: AccountId | None = None,
         **kwargs,
     ) -> None:
         raise NotImplementedError
 
     @handler("DeleteBucketIntelligentTieringConfiguration")
     def delete_bucket_intelligent_tiering_configuration(
-        self, context: RequestContext, bucket: BucketName, id: IntelligentTieringId, **kwargs
+        self,
+        context: RequestContext,
+        bucket: BucketName,
+        id: IntelligentTieringId,
+        expected_bucket_owner: AccountId | None = None,
+        **kwargs,
     ) -> None:
         raise NotImplementedError
 
@@ -3823,7 +3867,7 @@ class S3Api:
         context: RequestContext,
         bucket: BucketName,
         id: InventoryId,
-        expected_bucket_owner: AccountId = None,
+        expected_bucket_owner: AccountId | None = None,
         **kwargs,
     ) -> None:
         raise NotImplementedError
@@ -3833,7 +3877,7 @@ class S3Api:
         self,
         context: RequestContext,
         bucket: BucketName,
-        expected_bucket_owner: AccountId = None,
+        expected_bucket_owner: AccountId | None = None,
         **kwargs,
     ) -> None:
         raise NotImplementedError
@@ -3843,7 +3887,7 @@ class S3Api:
         self,
         context: RequestContext,
         bucket: BucketName,
-        expected_bucket_owner: AccountId = None,
+        expected_bucket_owner: AccountId | None = None,
         **kwargs,
     ) -> None:
         raise NotImplementedError
@@ -3854,7 +3898,7 @@ class S3Api:
         context: RequestContext,
         bucket: BucketName,
         id: MetricsId,
-        expected_bucket_owner: AccountId = None,
+        expected_bucket_owner: AccountId | None = None,
         **kwargs,
     ) -> None:
         raise NotImplementedError
@@ -3864,7 +3908,7 @@ class S3Api:
         self,
         context: RequestContext,
         bucket: BucketName,
-        expected_bucket_owner: AccountId = None,
+        expected_bucket_owner: AccountId | None = None,
         **kwargs,
     ) -> None:
         raise NotImplementedError
@@ -3874,7 +3918,7 @@ class S3Api:
         self,
         context: RequestContext,
         bucket: BucketName,
-        expected_bucket_owner: AccountId = None,
+        expected_bucket_owner: AccountId | None = None,
         **kwargs,
     ) -> None:
         raise NotImplementedError
@@ -3884,7 +3928,7 @@ class S3Api:
         self,
         context: RequestContext,
         bucket: BucketName,
-        expected_bucket_owner: AccountId = None,
+        expected_bucket_owner: AccountId | None = None,
         **kwargs,
     ) -> None:
         raise NotImplementedError
@@ -3894,7 +3938,7 @@ class S3Api:
         self,
         context: RequestContext,
         bucket: BucketName,
-        expected_bucket_owner: AccountId = None,
+        expected_bucket_owner: AccountId | None = None,
         **kwargs,
     ) -> None:
         raise NotImplementedError
@@ -3904,7 +3948,7 @@ class S3Api:
         self,
         context: RequestContext,
         bucket: BucketName,
-        expected_bucket_owner: AccountId = None,
+        expected_bucket_owner: AccountId | None = None,
         **kwargs,
     ) -> None:
         raise NotImplementedError
@@ -3915,14 +3959,14 @@ class S3Api:
         context: RequestContext,
         bucket: BucketName,
         key: ObjectKey,
-        mfa: MFA = None,
-        version_id: ObjectVersionId = None,
-        request_payer: RequestPayer = None,
-        bypass_governance_retention: BypassGovernanceRetention = None,
-        expected_bucket_owner: AccountId = None,
-        if_match: IfMatch = None,
-        if_match_last_modified_time: IfMatchLastModifiedTime = None,
-        if_match_size: IfMatchSize = None,
+        mfa: MFA | None = None,
+        version_id: ObjectVersionId | None = None,
+        request_payer: RequestPayer | None = None,
+        bypass_governance_retention: BypassGovernanceRetention | None = None,
+        expected_bucket_owner: AccountId | None = None,
+        if_match: IfMatch | None = None,
+        if_match_last_modified_time: IfMatchLastModifiedTime | None = None,
+        if_match_size: IfMatchSize | None = None,
         **kwargs,
     ) -> DeleteObjectOutput:
         raise NotImplementedError
@@ -3933,8 +3977,8 @@ class S3Api:
         context: RequestContext,
         bucket: BucketName,
         key: ObjectKey,
-        version_id: ObjectVersionId = None,
-        expected_bucket_owner: AccountId = None,
+        version_id: ObjectVersionId | None = None,
+        expected_bucket_owner: AccountId | None = None,
         **kwargs,
     ) -> DeleteObjectTaggingOutput:
         raise NotImplementedError
@@ -3945,11 +3989,11 @@ class S3Api:
         context: RequestContext,
         bucket: BucketName,
         delete: Delete,
-        mfa: MFA = None,
-        request_payer: RequestPayer = None,
-        bypass_governance_retention: BypassGovernanceRetention = None,
-        expected_bucket_owner: AccountId = None,
-        checksum_algorithm: ChecksumAlgorithm = None,
+        mfa: MFA | None = None,
+        request_payer: RequestPayer | None = None,
+        bypass_governance_retention: BypassGovernanceRetention | None = None,
+        expected_bucket_owner: AccountId | None = None,
+        checksum_algorithm: ChecksumAlgorithm | None = None,
         **kwargs,
     ) -> DeleteObjectsOutput:
         raise NotImplementedError
@@ -3959,7 +4003,7 @@ class S3Api:
         self,
         context: RequestContext,
         bucket: BucketName,
-        expected_bucket_owner: AccountId = None,
+        expected_bucket_owner: AccountId | None = None,
         **kwargs,
     ) -> None:
         raise NotImplementedError
@@ -3969,8 +4013,8 @@ class S3Api:
         self,
         context: RequestContext,
         bucket: BucketName,
-        expected_bucket_owner: AccountId = None,
-        request_payer: RequestPayer = None,
+        expected_bucket_owner: AccountId | None = None,
+        request_payer: RequestPayer | None = None,
         **kwargs,
     ) -> GetBucketAccelerateConfigurationOutput:
         raise NotImplementedError
@@ -3980,7 +4024,7 @@ class S3Api:
         self,
         context: RequestContext,
         bucket: BucketName,
-        expected_bucket_owner: AccountId = None,
+        expected_bucket_owner: AccountId | None = None,
         **kwargs,
     ) -> GetBucketAclOutput:
         raise NotImplementedError
@@ -3991,7 +4035,7 @@ class S3Api:
         context: RequestContext,
         bucket: BucketName,
         id: AnalyticsId,
-        expected_bucket_owner: AccountId = None,
+        expected_bucket_owner: AccountId | None = None,
         **kwargs,
     ) -> GetBucketAnalyticsConfigurationOutput:
         raise NotImplementedError
@@ -4001,7 +4045,7 @@ class S3Api:
         self,
         context: RequestContext,
         bucket: BucketName,
-        expected_bucket_owner: AccountId = None,
+        expected_bucket_owner: AccountId | None = None,
         **kwargs,
     ) -> GetBucketCorsOutput:
         raise NotImplementedError
@@ -4011,14 +4055,19 @@ class S3Api:
         self,
         context: RequestContext,
         bucket: BucketName,
-        expected_bucket_owner: AccountId = None,
+        expected_bucket_owner: AccountId | None = None,
         **kwargs,
     ) -> GetBucketEncryptionOutput:
         raise NotImplementedError
 
     @handler("GetBucketIntelligentTieringConfiguration")
     def get_bucket_intelligent_tiering_configuration(
-        self, context: RequestContext, bucket: BucketName, id: IntelligentTieringId, **kwargs
+        self,
+        context: RequestContext,
+        bucket: BucketName,
+        id: IntelligentTieringId,
+        expected_bucket_owner: AccountId | None = None,
+        **kwargs,
     ) -> GetBucketIntelligentTieringConfigurationOutput:
         raise NotImplementedError
 
@@ -4028,7 +4077,7 @@ class S3Api:
         context: RequestContext,
         bucket: BucketName,
         id: InventoryId,
-        expected_bucket_owner: AccountId = None,
+        expected_bucket_owner: AccountId | None = None,
         **kwargs,
     ) -> GetBucketInventoryConfigurationOutput:
         raise NotImplementedError
@@ -4038,7 +4087,7 @@ class S3Api:
         self,
         context: RequestContext,
         bucket: BucketName,
-        expected_bucket_owner: AccountId = None,
+        expected_bucket_owner: AccountId | None = None,
         **kwargs,
     ) -> GetBucketLifecycleOutput:
         raise NotImplementedError
@@ -4048,7 +4097,7 @@ class S3Api:
         self,
         context: RequestContext,
         bucket: BucketName,
-        expected_bucket_owner: AccountId = None,
+        expected_bucket_owner: AccountId | None = None,
         **kwargs,
     ) -> GetBucketLifecycleConfigurationOutput:
         raise NotImplementedError
@@ -4058,7 +4107,7 @@ class S3Api:
         self,
         context: RequestContext,
         bucket: BucketName,
-        expected_bucket_owner: AccountId = None,
+        expected_bucket_owner: AccountId | None = None,
         **kwargs,
     ) -> GetBucketLocationOutput:
         raise NotImplementedError
@@ -4068,7 +4117,7 @@ class S3Api:
         self,
         context: RequestContext,
         bucket: BucketName,
-        expected_bucket_owner: AccountId = None,
+        expected_bucket_owner: AccountId | None = None,
         **kwargs,
     ) -> GetBucketLoggingOutput:
         raise NotImplementedError
@@ -4078,7 +4127,7 @@ class S3Api:
         self,
         context: RequestContext,
         bucket: BucketName,
-        expected_bucket_owner: AccountId = None,
+        expected_bucket_owner: AccountId | None = None,
         **kwargs,
     ) -> GetBucketMetadataTableConfigurationOutput:
         raise NotImplementedError
@@ -4089,7 +4138,7 @@ class S3Api:
         context: RequestContext,
         bucket: BucketName,
         id: MetricsId,
-        expected_bucket_owner: AccountId = None,
+        expected_bucket_owner: AccountId | None = None,
         **kwargs,
     ) -> GetBucketMetricsConfigurationOutput:
         raise NotImplementedError
@@ -4099,7 +4148,7 @@ class S3Api:
         self,
         context: RequestContext,
         bucket: BucketName,
-        expected_bucket_owner: AccountId = None,
+        expected_bucket_owner: AccountId | None = None,
         **kwargs,
     ) -> NotificationConfigurationDeprecated:
         raise NotImplementedError
@@ -4109,7 +4158,7 @@ class S3Api:
         self,
         context: RequestContext,
         bucket: BucketName,
-        expected_bucket_owner: AccountId = None,
+        expected_bucket_owner: AccountId | None = None,
         **kwargs,
     ) -> NotificationConfiguration:
         raise NotImplementedError
@@ -4119,7 +4168,7 @@ class S3Api:
         self,
         context: RequestContext,
         bucket: BucketName,
-        expected_bucket_owner: AccountId = None,
+        expected_bucket_owner: AccountId | None = None,
         **kwargs,
     ) -> GetBucketOwnershipControlsOutput:
         raise NotImplementedError
@@ -4129,7 +4178,7 @@ class S3Api:
         self,
         context: RequestContext,
         bucket: BucketName,
-        expected_bucket_owner: AccountId = None,
+        expected_bucket_owner: AccountId | None = None,
         **kwargs,
     ) -> GetBucketPolicyOutput:
         raise NotImplementedError
@@ -4139,7 +4188,7 @@ class S3Api:
         self,
         context: RequestContext,
         bucket: BucketName,
-        expected_bucket_owner: AccountId = None,
+        expected_bucket_owner: AccountId | None = None,
         **kwargs,
     ) -> GetBucketPolicyStatusOutput:
         raise NotImplementedError
@@ -4149,7 +4198,7 @@ class S3Api:
         self,
         context: RequestContext,
         bucket: BucketName,
-        expected_bucket_owner: AccountId = None,
+        expected_bucket_owner: AccountId | None = None,
         **kwargs,
     ) -> GetBucketReplicationOutput:
         raise NotImplementedError
@@ -4159,7 +4208,7 @@ class S3Api:
         self,
         context: RequestContext,
         bucket: BucketName,
-        expected_bucket_owner: AccountId = None,
+        expected_bucket_owner: AccountId | None = None,
         **kwargs,
     ) -> GetBucketRequestPaymentOutput:
         raise NotImplementedError
@@ -4169,7 +4218,7 @@ class S3Api:
         self,
         context: RequestContext,
         bucket: BucketName,
-        expected_bucket_owner: AccountId = None,
+        expected_bucket_owner: AccountId | None = None,
         **kwargs,
     ) -> GetBucketTaggingOutput:
         raise NotImplementedError
@@ -4179,7 +4228,7 @@ class S3Api:
         self,
         context: RequestContext,
         bucket: BucketName,
-        expected_bucket_owner: AccountId = None,
+        expected_bucket_owner: AccountId | None = None,
         **kwargs,
     ) -> GetBucketVersioningOutput:
         raise NotImplementedError
@@ -4189,7 +4238,7 @@ class S3Api:
         self,
         context: RequestContext,
         bucket: BucketName,
-        expected_bucket_owner: AccountId = None,
+        expected_bucket_owner: AccountId | None = None,
         **kwargs,
     ) -> GetBucketWebsiteOutput:
         raise NotImplementedError
@@ -4200,25 +4249,25 @@ class S3Api:
         context: RequestContext,
         bucket: BucketName,
         key: ObjectKey,
-        if_match: IfMatch = None,
-        if_modified_since: IfModifiedSince = None,
-        if_none_match: IfNoneMatch = None,
-        if_unmodified_since: IfUnmodifiedSince = None,
-        range: Range = None,
-        response_cache_control: ResponseCacheControl = None,
-        response_content_disposition: ResponseContentDisposition = None,
-        response_content_encoding: ResponseContentEncoding = None,
-        response_content_language: ResponseContentLanguage = None,
-        response_content_type: ResponseContentType = None,
-        response_expires: ResponseExpires = None,
-        version_id: ObjectVersionId = None,
-        sse_customer_algorithm: SSECustomerAlgorithm = None,
-        sse_customer_key: SSECustomerKey = None,
-        sse_customer_key_md5: SSECustomerKeyMD5 = None,
-        request_payer: RequestPayer = None,
-        part_number: PartNumber = None,
-        expected_bucket_owner: AccountId = None,
-        checksum_mode: ChecksumMode = None,
+        if_match: IfMatch | None = None,
+        if_modified_since: IfModifiedSince | None = None,
+        if_none_match: IfNoneMatch | None = None,
+        if_unmodified_since: IfUnmodifiedSince | None = None,
+        range: Range | None = None,
+        response_cache_control: ResponseCacheControl | None = None,
+        response_content_disposition: ResponseContentDisposition | None = None,
+        response_content_encoding: ResponseContentEncoding | None = None,
+        response_content_language: ResponseContentLanguage | None = None,
+        response_content_type: ResponseContentType | None = None,
+        response_expires: ResponseExpires | None = None,
+        version_id: ObjectVersionId | None = None,
+        sse_customer_algorithm: SSECustomerAlgorithm | None = None,
+        sse_customer_key: SSECustomerKey | None = None,
+        sse_customer_key_md5: SSECustomerKeyMD5 | None = None,
+        request_payer: RequestPayer | None = None,
+        part_number: PartNumber | None = None,
+        expected_bucket_owner: AccountId | None = None,
+        checksum_mode: ChecksumMode | None = None,
         **kwargs,
     ) -> GetObjectOutput:
         raise NotImplementedError
@@ -4229,9 +4278,9 @@ class S3Api:
         context: RequestContext,
         bucket: BucketName,
         key: ObjectKey,
-        version_id: ObjectVersionId = None,
-        request_payer: RequestPayer = None,
-        expected_bucket_owner: AccountId = None,
+        version_id: ObjectVersionId | None = None,
+        request_payer: RequestPayer | None = None,
+        expected_bucket_owner: AccountId | None = None,
         **kwargs,
     ) -> GetObjectAclOutput:
         raise NotImplementedError
@@ -4243,14 +4292,14 @@ class S3Api:
         bucket: BucketName,
         key: ObjectKey,
         object_attributes: ObjectAttributesList,
-        version_id: ObjectVersionId = None,
-        max_parts: MaxParts = None,
-        part_number_marker: PartNumberMarker = None,
-        sse_customer_algorithm: SSECustomerAlgorithm = None,
-        sse_customer_key: SSECustomerKey = None,
-        sse_customer_key_md5: SSECustomerKeyMD5 = None,
-        request_payer: RequestPayer = None,
-        expected_bucket_owner: AccountId = None,
+        version_id: ObjectVersionId | None = None,
+        max_parts: MaxParts | None = None,
+        part_number_marker: PartNumberMarker | None = None,
+        sse_customer_algorithm: SSECustomerAlgorithm | None = None,
+        sse_customer_key: SSECustomerKey | None = None,
+        sse_customer_key_md5: SSECustomerKeyMD5 | None = None,
+        request_payer: RequestPayer | None = None,
+        expected_bucket_owner: AccountId | None = None,
         **kwargs,
     ) -> GetObjectAttributesOutput:
         raise NotImplementedError
@@ -4261,9 +4310,9 @@ class S3Api:
         context: RequestContext,
         bucket: BucketName,
         key: ObjectKey,
-        version_id: ObjectVersionId = None,
-        request_payer: RequestPayer = None,
-        expected_bucket_owner: AccountId = None,
+        version_id: ObjectVersionId | None = None,
+        request_payer: RequestPayer | None = None,
+        expected_bucket_owner: AccountId | None = None,
         **kwargs,
     ) -> GetObjectLegalHoldOutput:
         raise NotImplementedError
@@ -4273,7 +4322,7 @@ class S3Api:
         self,
         context: RequestContext,
         bucket: BucketName,
-        expected_bucket_owner: AccountId = None,
+        expected_bucket_owner: AccountId | None = None,
         **kwargs,
     ) -> GetObjectLockConfigurationOutput:
         raise NotImplementedError
@@ -4284,9 +4333,9 @@ class S3Api:
         context: RequestContext,
         bucket: BucketName,
         key: ObjectKey,
-        version_id: ObjectVersionId = None,
-        request_payer: RequestPayer = None,
-        expected_bucket_owner: AccountId = None,
+        version_id: ObjectVersionId | None = None,
+        request_payer: RequestPayer | None = None,
+        expected_bucket_owner: AccountId | None = None,
         **kwargs,
     ) -> GetObjectRetentionOutput:
         raise NotImplementedError
@@ -4297,9 +4346,9 @@ class S3Api:
         context: RequestContext,
         bucket: BucketName,
         key: ObjectKey,
-        version_id: ObjectVersionId = None,
-        expected_bucket_owner: AccountId = None,
-        request_payer: RequestPayer = None,
+        version_id: ObjectVersionId | None = None,
+        expected_bucket_owner: AccountId | None = None,
+        request_payer: RequestPayer | None = None,
         **kwargs,
     ) -> GetObjectTaggingOutput:
         raise NotImplementedError
@@ -4310,8 +4359,8 @@ class S3Api:
         context: RequestContext,
         bucket: BucketName,
         key: ObjectKey,
-        request_payer: RequestPayer = None,
-        expected_bucket_owner: AccountId = None,
+        request_payer: RequestPayer | None = None,
+        expected_bucket_owner: AccountId | None = None,
         **kwargs,
     ) -> GetObjectTorrentOutput:
         raise NotImplementedError
@@ -4321,7 +4370,7 @@ class S3Api:
         self,
         context: RequestContext,
         bucket: BucketName,
-        expected_bucket_owner: AccountId = None,
+        expected_bucket_owner: AccountId | None = None,
         **kwargs,
     ) -> GetPublicAccessBlockOutput:
         raise NotImplementedError
@@ -4331,7 +4380,7 @@ class S3Api:
         self,
         context: RequestContext,
         bucket: BucketName,
-        expected_bucket_owner: AccountId = None,
+        expected_bucket_owner: AccountId | None = None,
         **kwargs,
     ) -> HeadBucketOutput:
         raise NotImplementedError
@@ -4342,25 +4391,25 @@ class S3Api:
         context: RequestContext,
         bucket: BucketName,
         key: ObjectKey,
-        if_match: IfMatch = None,
-        if_modified_since: IfModifiedSince = None,
-        if_none_match: IfNoneMatch = None,
-        if_unmodified_since: IfUnmodifiedSince = None,
-        range: Range = None,
-        response_cache_control: ResponseCacheControl = None,
-        response_content_disposition: ResponseContentDisposition = None,
-        response_content_encoding: ResponseContentEncoding = None,
-        response_content_language: ResponseContentLanguage = None,
-        response_content_type: ResponseContentType = None,
-        response_expires: ResponseExpires = None,
-        version_id: ObjectVersionId = None,
-        sse_customer_algorithm: SSECustomerAlgorithm = None,
-        sse_customer_key: SSECustomerKey = None,
-        sse_customer_key_md5: SSECustomerKeyMD5 = None,
-        request_payer: RequestPayer = None,
-        part_number: PartNumber = None,
-        expected_bucket_owner: AccountId = None,
-        checksum_mode: ChecksumMode = None,
+        if_match: IfMatch | None = None,
+        if_modified_since: IfModifiedSince | None = None,
+        if_none_match: IfNoneMatch | None = None,
+        if_unmodified_since: IfUnmodifiedSince | None = None,
+        range: Range | None = None,
+        response_cache_control: ResponseCacheControl | None = None,
+        response_content_disposition: ResponseContentDisposition | None = None,
+        response_content_encoding: ResponseContentEncoding | None = None,
+        response_content_language: ResponseContentLanguage | None = None,
+        response_content_type: ResponseContentType | None = None,
+        response_expires: ResponseExpires | None = None,
+        version_id: ObjectVersionId | None = None,
+        sse_customer_algorithm: SSECustomerAlgorithm | None = None,
+        sse_customer_key: SSECustomerKey | None = None,
+        sse_customer_key_md5: SSECustomerKeyMD5 | None = None,
+        request_payer: RequestPayer | None = None,
+        part_number: PartNumber | None = None,
+        expected_bucket_owner: AccountId | None = None,
+        checksum_mode: ChecksumMode | None = None,
         **kwargs,
     ) -> HeadObjectOutput:
         raise NotImplementedError
@@ -4370,8 +4419,8 @@ class S3Api:
         self,
         context: RequestContext,
         bucket: BucketName,
-        continuation_token: Token = None,
-        expected_bucket_owner: AccountId = None,
+        continuation_token: Token | None = None,
+        expected_bucket_owner: AccountId | None = None,
         **kwargs,
     ) -> ListBucketAnalyticsConfigurationsOutput:
         raise NotImplementedError
@@ -4381,7 +4430,8 @@ class S3Api:
         self,
         context: RequestContext,
         bucket: BucketName,
-        continuation_token: Token = None,
+        continuation_token: Token | None = None,
+        expected_bucket_owner: AccountId | None = None,
         **kwargs,
     ) -> ListBucketIntelligentTieringConfigurationsOutput:
         raise NotImplementedError
@@ -4391,8 +4441,8 @@ class S3Api:
         self,
         context: RequestContext,
         bucket: BucketName,
-        continuation_token: Token = None,
-        expected_bucket_owner: AccountId = None,
+        continuation_token: Token | None = None,
+        expected_bucket_owner: AccountId | None = None,
         **kwargs,
     ) -> ListBucketInventoryConfigurationsOutput:
         raise NotImplementedError
@@ -4402,8 +4452,8 @@ class S3Api:
         self,
         context: RequestContext,
         bucket: BucketName,
-        continuation_token: Token = None,
-        expected_bucket_owner: AccountId = None,
+        continuation_token: Token | None = None,
+        expected_bucket_owner: AccountId | None = None,
         **kwargs,
     ) -> ListBucketMetricsConfigurationsOutput:
         raise NotImplementedError
@@ -4412,10 +4462,10 @@ class S3Api:
     def list_buckets(
         self,
         context: RequestContext,
-        max_buckets: MaxBuckets = None,
-        continuation_token: Token = None,
-        prefix: Prefix = None,
-        bucket_region: BucketRegion = None,
+        max_buckets: MaxBuckets | None = None,
+        continuation_token: Token | None = None,
+        prefix: Prefix | None = None,
+        bucket_region: BucketRegion | None = None,
         **kwargs,
     ) -> ListBucketsOutput:
         raise NotImplementedError
@@ -4424,8 +4474,8 @@ class S3Api:
     def list_directory_buckets(
         self,
         context: RequestContext,
-        continuation_token: DirectoryBucketToken = None,
-        max_directory_buckets: MaxDirectoryBuckets = None,
+        continuation_token: DirectoryBucketToken | None = None,
+        max_directory_buckets: MaxDirectoryBuckets | None = None,
         **kwargs,
     ) -> ListDirectoryBucketsOutput:
         raise NotImplementedError
@@ -4435,14 +4485,14 @@ class S3Api:
         self,
         context: RequestContext,
         bucket: BucketName,
-        delimiter: Delimiter = None,
-        encoding_type: EncodingType = None,
-        key_marker: KeyMarker = None,
-        max_uploads: MaxUploads = None,
-        prefix: Prefix = None,
-        upload_id_marker: UploadIdMarker = None,
-        expected_bucket_owner: AccountId = None,
-        request_payer: RequestPayer = None,
+        delimiter: Delimiter | None = None,
+        encoding_type: EncodingType | None = None,
+        key_marker: KeyMarker | None = None,
+        max_uploads: MaxUploads | None = None,
+        prefix: Prefix | None = None,
+        upload_id_marker: UploadIdMarker | None = None,
+        expected_bucket_owner: AccountId | None = None,
+        request_payer: RequestPayer | None = None,
         **kwargs,
     ) -> ListMultipartUploadsOutput:
         raise NotImplementedError
@@ -4452,15 +4502,15 @@ class S3Api:
         self,
         context: RequestContext,
         bucket: BucketName,
-        delimiter: Delimiter = None,
-        encoding_type: EncodingType = None,
-        key_marker: KeyMarker = None,
-        max_keys: MaxKeys = None,
-        prefix: Prefix = None,
-        version_id_marker: VersionIdMarker = None,
-        expected_bucket_owner: AccountId = None,
-        request_payer: RequestPayer = None,
-        optional_object_attributes: OptionalObjectAttributesList = None,
+        delimiter: Delimiter | None = None,
+        encoding_type: EncodingType | None = None,
+        key_marker: KeyMarker | None = None,
+        max_keys: MaxKeys | None = None,
+        prefix: Prefix | None = None,
+        version_id_marker: VersionIdMarker | None = None,
+        expected_bucket_owner: AccountId | None = None,
+        request_payer: RequestPayer | None = None,
+        optional_object_attributes: OptionalObjectAttributesList | None = None,
         **kwargs,
     ) -> ListObjectVersionsOutput:
         raise NotImplementedError
@@ -4470,14 +4520,14 @@ class S3Api:
         self,
         context: RequestContext,
         bucket: BucketName,
-        delimiter: Delimiter = None,
-        encoding_type: EncodingType = None,
-        marker: Marker = None,
-        max_keys: MaxKeys = None,
-        prefix: Prefix = None,
-        request_payer: RequestPayer = None,
-        expected_bucket_owner: AccountId = None,
-        optional_object_attributes: OptionalObjectAttributesList = None,
+        delimiter: Delimiter | None = None,
+        encoding_type: EncodingType | None = None,
+        marker: Marker | None = None,
+        max_keys: MaxKeys | None = None,
+        prefix: Prefix | None = None,
+        request_payer: RequestPayer | None = None,
+        expected_bucket_owner: AccountId | None = None,
+        optional_object_attributes: OptionalObjectAttributesList | None = None,
         **kwargs,
     ) -> ListObjectsOutput:
         raise NotImplementedError
@@ -4487,16 +4537,16 @@ class S3Api:
         self,
         context: RequestContext,
         bucket: BucketName,
-        delimiter: Delimiter = None,
-        encoding_type: EncodingType = None,
-        max_keys: MaxKeys = None,
-        prefix: Prefix = None,
-        continuation_token: Token = None,
-        fetch_owner: FetchOwner = None,
-        start_after: StartAfter = None,
-        request_payer: RequestPayer = None,
-        expected_bucket_owner: AccountId = None,
-        optional_object_attributes: OptionalObjectAttributesList = None,
+        delimiter: Delimiter | None = None,
+        encoding_type: EncodingType | None = None,
+        max_keys: MaxKeys | None = None,
+        prefix: Prefix | None = None,
+        continuation_token: Token | None = None,
+        fetch_owner: FetchOwner | None = None,
+        start_after: StartAfter | None = None,
+        request_payer: RequestPayer | None = None,
+        expected_bucket_owner: AccountId | None = None,
+        optional_object_attributes: OptionalObjectAttributesList | None = None,
         **kwargs,
     ) -> ListObjectsV2Output:
         raise NotImplementedError
@@ -4508,13 +4558,13 @@ class S3Api:
         bucket: BucketName,
         key: ObjectKey,
         upload_id: MultipartUploadId,
-        max_parts: MaxParts = None,
-        part_number_marker: PartNumberMarker = None,
-        request_payer: RequestPayer = None,
-        expected_bucket_owner: AccountId = None,
-        sse_customer_algorithm: SSECustomerAlgorithm = None,
-        sse_customer_key: SSECustomerKey = None,
-        sse_customer_key_md5: SSECustomerKeyMD5 = None,
+        max_parts: MaxParts | None = None,
+        part_number_marker: PartNumberMarker | None = None,
+        request_payer: RequestPayer | None = None,
+        expected_bucket_owner: AccountId | None = None,
+        sse_customer_algorithm: SSECustomerAlgorithm | None = None,
+        sse_customer_key: SSECustomerKey | None = None,
+        sse_customer_key_md5: SSECustomerKeyMD5 | None = None,
         **kwargs,
     ) -> ListPartsOutput:
         raise NotImplementedError
@@ -4525,8 +4575,8 @@ class S3Api:
         context: RequestContext,
         bucket: BucketName,
         accelerate_configuration: AccelerateConfiguration,
-        expected_bucket_owner: AccountId = None,
-        checksum_algorithm: ChecksumAlgorithm = None,
+        expected_bucket_owner: AccountId | None = None,
+        checksum_algorithm: ChecksumAlgorithm | None = None,
         **kwargs,
     ) -> None:
         raise NotImplementedError
@@ -4536,16 +4586,16 @@ class S3Api:
         self,
         context: RequestContext,
         bucket: BucketName,
-        acl: BucketCannedACL = None,
-        access_control_policy: AccessControlPolicy = None,
-        content_md5: ContentMD5 = None,
-        checksum_algorithm: ChecksumAlgorithm = None,
-        grant_full_control: GrantFullControl = None,
-        grant_read: GrantRead = None,
-        grant_read_acp: GrantReadACP = None,
-        grant_write: GrantWrite = None,
-        grant_write_acp: GrantWriteACP = None,
-        expected_bucket_owner: AccountId = None,
+        acl: BucketCannedACL | None = None,
+        access_control_policy: AccessControlPolicy | None = None,
+        content_md5: ContentMD5 | None = None,
+        checksum_algorithm: ChecksumAlgorithm | None = None,
+        grant_full_control: GrantFullControl | None = None,
+        grant_read: GrantRead | None = None,
+        grant_read_acp: GrantReadACP | None = None,
+        grant_write: GrantWrite | None = None,
+        grant_write_acp: GrantWriteACP | None = None,
+        expected_bucket_owner: AccountId | None = None,
         **kwargs,
     ) -> None:
         raise NotImplementedError
@@ -4557,7 +4607,7 @@ class S3Api:
         bucket: BucketName,
         id: AnalyticsId,
         analytics_configuration: AnalyticsConfiguration,
-        expected_bucket_owner: AccountId = None,
+        expected_bucket_owner: AccountId | None = None,
         **kwargs,
     ) -> None:
         raise NotImplementedError
@@ -4568,9 +4618,9 @@ class S3Api:
         context: RequestContext,
         bucket: BucketName,
         cors_configuration: CORSConfiguration,
-        content_md5: ContentMD5 = None,
-        checksum_algorithm: ChecksumAlgorithm = None,
-        expected_bucket_owner: AccountId = None,
+        content_md5: ContentMD5 | None = None,
+        checksum_algorithm: ChecksumAlgorithm | None = None,
+        expected_bucket_owner: AccountId | None = None,
         **kwargs,
     ) -> None:
         raise NotImplementedError
@@ -4581,9 +4631,9 @@ class S3Api:
         context: RequestContext,
         bucket: BucketName,
         server_side_encryption_configuration: ServerSideEncryptionConfiguration,
-        content_md5: ContentMD5 = None,
-        checksum_algorithm: ChecksumAlgorithm = None,
-        expected_bucket_owner: AccountId = None,
+        content_md5: ContentMD5 | None = None,
+        checksum_algorithm: ChecksumAlgorithm | None = None,
+        expected_bucket_owner: AccountId | None = None,
         **kwargs,
     ) -> None:
         raise NotImplementedError
@@ -4595,6 +4645,7 @@ class S3Api:
         bucket: BucketName,
         id: IntelligentTieringId,
         intelligent_tiering_configuration: IntelligentTieringConfiguration,
+        expected_bucket_owner: AccountId | None = None,
         **kwargs,
     ) -> None:
         raise NotImplementedError
@@ -4606,7 +4657,7 @@ class S3Api:
         bucket: BucketName,
         id: InventoryId,
         inventory_configuration: InventoryConfiguration,
-        expected_bucket_owner: AccountId = None,
+        expected_bucket_owner: AccountId | None = None,
         **kwargs,
     ) -> None:
         raise NotImplementedError
@@ -4616,10 +4667,10 @@ class S3Api:
         self,
         context: RequestContext,
         bucket: BucketName,
-        content_md5: ContentMD5 = None,
-        checksum_algorithm: ChecksumAlgorithm = None,
-        lifecycle_configuration: LifecycleConfiguration = None,
-        expected_bucket_owner: AccountId = None,
+        content_md5: ContentMD5 | None = None,
+        checksum_algorithm: ChecksumAlgorithm | None = None,
+        lifecycle_configuration: LifecycleConfiguration | None = None,
+        expected_bucket_owner: AccountId | None = None,
         **kwargs,
     ) -> None:
         raise NotImplementedError
@@ -4629,10 +4680,10 @@ class S3Api:
         self,
         context: RequestContext,
         bucket: BucketName,
-        checksum_algorithm: ChecksumAlgorithm = None,
-        lifecycle_configuration: BucketLifecycleConfiguration = None,
-        expected_bucket_owner: AccountId = None,
-        transition_default_minimum_object_size: TransitionDefaultMinimumObjectSize = None,
+        checksum_algorithm: ChecksumAlgorithm | None = None,
+        lifecycle_configuration: BucketLifecycleConfiguration | None = None,
+        expected_bucket_owner: AccountId | None = None,
+        transition_default_minimum_object_size: TransitionDefaultMinimumObjectSize | None = None,
         **kwargs,
     ) -> PutBucketLifecycleConfigurationOutput:
         raise NotImplementedError
@@ -4643,9 +4694,9 @@ class S3Api:
         context: RequestContext,
         bucket: BucketName,
         bucket_logging_status: BucketLoggingStatus,
-        content_md5: ContentMD5 = None,
-        checksum_algorithm: ChecksumAlgorithm = None,
-        expected_bucket_owner: AccountId = None,
+        content_md5: ContentMD5 | None = None,
+        checksum_algorithm: ChecksumAlgorithm | None = None,
+        expected_bucket_owner: AccountId | None = None,
         **kwargs,
     ) -> None:
         raise NotImplementedError
@@ -4657,7 +4708,7 @@ class S3Api:
         bucket: BucketName,
         id: MetricsId,
         metrics_configuration: MetricsConfiguration,
-        expected_bucket_owner: AccountId = None,
+        expected_bucket_owner: AccountId | None = None,
         **kwargs,
     ) -> None:
         raise NotImplementedError
@@ -4668,9 +4719,9 @@ class S3Api:
         context: RequestContext,
         bucket: BucketName,
         notification_configuration: NotificationConfigurationDeprecated,
-        content_md5: ContentMD5 = None,
-        checksum_algorithm: ChecksumAlgorithm = None,
-        expected_bucket_owner: AccountId = None,
+        content_md5: ContentMD5 | None = None,
+        checksum_algorithm: ChecksumAlgorithm | None = None,
+        expected_bucket_owner: AccountId | None = None,
         **kwargs,
     ) -> None:
         raise NotImplementedError
@@ -4681,8 +4732,8 @@ class S3Api:
         context: RequestContext,
         bucket: BucketName,
         notification_configuration: NotificationConfiguration,
-        expected_bucket_owner: AccountId = None,
-        skip_destination_validation: SkipValidation = None,
+        expected_bucket_owner: AccountId | None = None,
+        skip_destination_validation: SkipValidation | None = None,
         **kwargs,
     ) -> None:
         raise NotImplementedError
@@ -4693,8 +4744,9 @@ class S3Api:
         context: RequestContext,
         bucket: BucketName,
         ownership_controls: OwnershipControls,
-        content_md5: ContentMD5 = None,
-        expected_bucket_owner: AccountId = None,
+        content_md5: ContentMD5 | None = None,
+        expected_bucket_owner: AccountId | None = None,
+        checksum_algorithm: ChecksumAlgorithm | None = None,
         **kwargs,
     ) -> None:
         raise NotImplementedError
@@ -4705,10 +4757,10 @@ class S3Api:
         context: RequestContext,
         bucket: BucketName,
         policy: Policy,
-        content_md5: ContentMD5 = None,
-        checksum_algorithm: ChecksumAlgorithm = None,
-        confirm_remove_self_bucket_access: ConfirmRemoveSelfBucketAccess = None,
-        expected_bucket_owner: AccountId = None,
+        content_md5: ContentMD5 | None = None,
+        checksum_algorithm: ChecksumAlgorithm | None = None,
+        confirm_remove_self_bucket_access: ConfirmRemoveSelfBucketAccess | None = None,
+        expected_bucket_owner: AccountId | None = None,
         **kwargs,
     ) -> None:
         raise NotImplementedError
@@ -4719,10 +4771,10 @@ class S3Api:
         context: RequestContext,
         bucket: BucketName,
         replication_configuration: ReplicationConfiguration,
-        content_md5: ContentMD5 = None,
-        checksum_algorithm: ChecksumAlgorithm = None,
-        token: ObjectLockToken = None,
-        expected_bucket_owner: AccountId = None,
+        content_md5: ContentMD5 | None = None,
+        checksum_algorithm: ChecksumAlgorithm | None = None,
+        token: ObjectLockToken | None = None,
+        expected_bucket_owner: AccountId | None = None,
         **kwargs,
     ) -> None:
         raise NotImplementedError
@@ -4733,9 +4785,9 @@ class S3Api:
         context: RequestContext,
         bucket: BucketName,
         request_payment_configuration: RequestPaymentConfiguration,
-        content_md5: ContentMD5 = None,
-        checksum_algorithm: ChecksumAlgorithm = None,
-        expected_bucket_owner: AccountId = None,
+        content_md5: ContentMD5 | None = None,
+        checksum_algorithm: ChecksumAlgorithm | None = None,
+        expected_bucket_owner: AccountId | None = None,
         **kwargs,
     ) -> None:
         raise NotImplementedError
@@ -4746,9 +4798,9 @@ class S3Api:
         context: RequestContext,
         bucket: BucketName,
         tagging: Tagging,
-        content_md5: ContentMD5 = None,
-        checksum_algorithm: ChecksumAlgorithm = None,
-        expected_bucket_owner: AccountId = None,
+        content_md5: ContentMD5 | None = None,
+        checksum_algorithm: ChecksumAlgorithm | None = None,
+        expected_bucket_owner: AccountId | None = None,
         **kwargs,
     ) -> None:
         raise NotImplementedError
@@ -4759,10 +4811,10 @@ class S3Api:
         context: RequestContext,
         bucket: BucketName,
         versioning_configuration: VersioningConfiguration,
-        content_md5: ContentMD5 = None,
-        checksum_algorithm: ChecksumAlgorithm = None,
-        mfa: MFA = None,
-        expected_bucket_owner: AccountId = None,
+        content_md5: ContentMD5 | None = None,
+        checksum_algorithm: ChecksumAlgorithm | None = None,
+        mfa: MFA | None = None,
+        expected_bucket_owner: AccountId | None = None,
         **kwargs,
     ) -> None:
         raise NotImplementedError
@@ -4773,9 +4825,9 @@ class S3Api:
         context: RequestContext,
         bucket: BucketName,
         website_configuration: WebsiteConfiguration,
-        content_md5: ContentMD5 = None,
-        checksum_algorithm: ChecksumAlgorithm = None,
-        expected_bucket_owner: AccountId = None,
+        content_md5: ContentMD5 | None = None,
+        checksum_algorithm: ChecksumAlgorithm | None = None,
+        expected_bucket_owner: AccountId | None = None,
         **kwargs,
     ) -> None:
         raise NotImplementedError
@@ -4786,45 +4838,45 @@ class S3Api:
         context: RequestContext,
         bucket: BucketName,
         key: ObjectKey,
-        acl: ObjectCannedACL = None,
-        body: IO[Body] = None,
-        cache_control: CacheControl = None,
-        content_disposition: ContentDisposition = None,
-        content_encoding: ContentEncoding = None,
-        content_language: ContentLanguage = None,
-        content_length: ContentLength = None,
-        content_md5: ContentMD5 = None,
-        content_type: ContentType = None,
-        checksum_algorithm: ChecksumAlgorithm = None,
-        checksum_crc32: ChecksumCRC32 = None,
-        checksum_crc32_c: ChecksumCRC32C = None,
-        checksum_crc64_nvme: ChecksumCRC64NVME = None,
-        checksum_sha1: ChecksumSHA1 = None,
-        checksum_sha256: ChecksumSHA256 = None,
-        expires: Expires = None,
-        if_match: IfMatch = None,
-        if_none_match: IfNoneMatch = None,
-        grant_full_control: GrantFullControl = None,
-        grant_read: GrantRead = None,
-        grant_read_acp: GrantReadACP = None,
-        grant_write_acp: GrantWriteACP = None,
-        write_offset_bytes: WriteOffsetBytes = None,
-        metadata: Metadata = None,
-        server_side_encryption: ServerSideEncryption = None,
-        storage_class: StorageClass = None,
-        website_redirect_location: WebsiteRedirectLocation = None,
-        sse_customer_algorithm: SSECustomerAlgorithm = None,
-        sse_customer_key: SSECustomerKey = None,
-        sse_customer_key_md5: SSECustomerKeyMD5 = None,
-        ssekms_key_id: SSEKMSKeyId = None,
-        ssekms_encryption_context: SSEKMSEncryptionContext = None,
-        bucket_key_enabled: BucketKeyEnabled = None,
-        request_payer: RequestPayer = None,
-        tagging: TaggingHeader = None,
-        object_lock_mode: ObjectLockMode = None,
-        object_lock_retain_until_date: ObjectLockRetainUntilDate = None,
-        object_lock_legal_hold_status: ObjectLockLegalHoldStatus = None,
-        expected_bucket_owner: AccountId = None,
+        acl: ObjectCannedACL | None = None,
+        body: IO[Body] | None = None,
+        cache_control: CacheControl | None = None,
+        content_disposition: ContentDisposition | None = None,
+        content_encoding: ContentEncoding | None = None,
+        content_language: ContentLanguage | None = None,
+        content_length: ContentLength | None = None,
+        content_md5: ContentMD5 | None = None,
+        content_type: ContentType | None = None,
+        checksum_algorithm: ChecksumAlgorithm | None = None,
+        checksum_crc32: ChecksumCRC32 | None = None,
+        checksum_crc32_c: ChecksumCRC32C | None = None,
+        checksum_crc64_nvme: ChecksumCRC64NVME | None = None,
+        checksum_sha1: ChecksumSHA1 | None = None,
+        checksum_sha256: ChecksumSHA256 | None = None,
+        expires: Expires | None = None,
+        if_match: IfMatch | None = None,
+        if_none_match: IfNoneMatch | None = None,
+        grant_full_control: GrantFullControl | None = None,
+        grant_read: GrantRead | None = None,
+        grant_read_acp: GrantReadACP | None = None,
+        grant_write_acp: GrantWriteACP | None = None,
+        write_offset_bytes: WriteOffsetBytes | None = None,
+        metadata: Metadata | None = None,
+        server_side_encryption: ServerSideEncryption | None = None,
+        storage_class: StorageClass | None = None,
+        website_redirect_location: WebsiteRedirectLocation | None = None,
+        sse_customer_algorithm: SSECustomerAlgorithm | None = None,
+        sse_customer_key: SSECustomerKey | None = None,
+        sse_customer_key_md5: SSECustomerKeyMD5 | None = None,
+        ssekms_key_id: SSEKMSKeyId | None = None,
+        ssekms_encryption_context: SSEKMSEncryptionContext | None = None,
+        bucket_key_enabled: BucketKeyEnabled | None = None,
+        request_payer: RequestPayer | None = None,
+        tagging: TaggingHeader | None = None,
+        object_lock_mode: ObjectLockMode | None = None,
+        object_lock_retain_until_date: ObjectLockRetainUntilDate | None = None,
+        object_lock_legal_hold_status: ObjectLockLegalHoldStatus | None = None,
+        expected_bucket_owner: AccountId | None = None,
         **kwargs,
     ) -> PutObjectOutput:
         raise NotImplementedError
@@ -4835,18 +4887,18 @@ class S3Api:
         context: RequestContext,
         bucket: BucketName,
         key: ObjectKey,
-        acl: ObjectCannedACL = None,
-        access_control_policy: AccessControlPolicy = None,
-        content_md5: ContentMD5 = None,
-        checksum_algorithm: ChecksumAlgorithm = None,
-        grant_full_control: GrantFullControl = None,
-        grant_read: GrantRead = None,
-        grant_read_acp: GrantReadACP = None,
-        grant_write: GrantWrite = None,
-        grant_write_acp: GrantWriteACP = None,
-        request_payer: RequestPayer = None,
-        version_id: ObjectVersionId = None,
-        expected_bucket_owner: AccountId = None,
+        acl: ObjectCannedACL | None = None,
+        access_control_policy: AccessControlPolicy | None = None,
+        content_md5: ContentMD5 | None = None,
+        checksum_algorithm: ChecksumAlgorithm | None = None,
+        grant_full_control: GrantFullControl | None = None,
+        grant_read: GrantRead | None = None,
+        grant_read_acp: GrantReadACP | None = None,
+        grant_write: GrantWrite | None = None,
+        grant_write_acp: GrantWriteACP | None = None,
+        request_payer: RequestPayer | None = None,
+        version_id: ObjectVersionId | None = None,
+        expected_bucket_owner: AccountId | None = None,
         **kwargs,
     ) -> PutObjectAclOutput:
         raise NotImplementedError
@@ -4857,12 +4909,12 @@ class S3Api:
         context: RequestContext,
         bucket: BucketName,
         key: ObjectKey,
-        legal_hold: ObjectLockLegalHold = None,
-        request_payer: RequestPayer = None,
-        version_id: ObjectVersionId = None,
-        content_md5: ContentMD5 = None,
-        checksum_algorithm: ChecksumAlgorithm = None,
-        expected_bucket_owner: AccountId = None,
+        legal_hold: ObjectLockLegalHold | None = None,
+        request_payer: RequestPayer | None = None,
+        version_id: ObjectVersionId | None = None,
+        content_md5: ContentMD5 | None = None,
+        checksum_algorithm: ChecksumAlgorithm | None = None,
+        expected_bucket_owner: AccountId | None = None,
         **kwargs,
     ) -> PutObjectLegalHoldOutput:
         raise NotImplementedError
@@ -4872,12 +4924,12 @@ class S3Api:
         self,
         context: RequestContext,
         bucket: BucketName,
-        object_lock_configuration: ObjectLockConfiguration = None,
-        request_payer: RequestPayer = None,
-        token: ObjectLockToken = None,
-        content_md5: ContentMD5 = None,
-        checksum_algorithm: ChecksumAlgorithm = None,
-        expected_bucket_owner: AccountId = None,
+        object_lock_configuration: ObjectLockConfiguration | None = None,
+        request_payer: RequestPayer | None = None,
+        token: ObjectLockToken | None = None,
+        content_md5: ContentMD5 | None = None,
+        checksum_algorithm: ChecksumAlgorithm | None = None,
+        expected_bucket_owner: AccountId | None = None,
         **kwargs,
     ) -> PutObjectLockConfigurationOutput:
         raise NotImplementedError
@@ -4888,13 +4940,13 @@ class S3Api:
         context: RequestContext,
         bucket: BucketName,
         key: ObjectKey,
-        retention: ObjectLockRetention = None,
-        request_payer: RequestPayer = None,
-        version_id: ObjectVersionId = None,
-        bypass_governance_retention: BypassGovernanceRetention = None,
-        content_md5: ContentMD5 = None,
-        checksum_algorithm: ChecksumAlgorithm = None,
-        expected_bucket_owner: AccountId = None,
+        retention: ObjectLockRetention | None = None,
+        request_payer: RequestPayer | None = None,
+        version_id: ObjectVersionId | None = None,
+        bypass_governance_retention: BypassGovernanceRetention | None = None,
+        content_md5: ContentMD5 | None = None,
+        checksum_algorithm: ChecksumAlgorithm | None = None,
+        expected_bucket_owner: AccountId | None = None,
         **kwargs,
     ) -> PutObjectRetentionOutput:
         raise NotImplementedError
@@ -4906,11 +4958,11 @@ class S3Api:
         bucket: BucketName,
         key: ObjectKey,
         tagging: Tagging,
-        version_id: ObjectVersionId = None,
-        content_md5: ContentMD5 = None,
-        checksum_algorithm: ChecksumAlgorithm = None,
-        expected_bucket_owner: AccountId = None,
-        request_payer: RequestPayer = None,
+        version_id: ObjectVersionId | None = None,
+        content_md5: ContentMD5 | None = None,
+        checksum_algorithm: ChecksumAlgorithm | None = None,
+        expected_bucket_owner: AccountId | None = None,
+        request_payer: RequestPayer | None = None,
         **kwargs,
     ) -> PutObjectTaggingOutput:
         raise NotImplementedError
@@ -4921,11 +4973,31 @@ class S3Api:
         context: RequestContext,
         bucket: BucketName,
         public_access_block_configuration: PublicAccessBlockConfiguration,
-        content_md5: ContentMD5 = None,
-        checksum_algorithm: ChecksumAlgorithm = None,
-        expected_bucket_owner: AccountId = None,
+        content_md5: ContentMD5 | None = None,
+        checksum_algorithm: ChecksumAlgorithm | None = None,
+        expected_bucket_owner: AccountId | None = None,
         **kwargs,
     ) -> None:
+        raise NotImplementedError
+
+    @handler("RenameObject")
+    def rename_object(
+        self,
+        context: RequestContext,
+        bucket: BucketName,
+        key: ObjectKey,
+        rename_source: RenameSource,
+        destination_if_match: IfMatch | None = None,
+        destination_if_none_match: IfNoneMatch | None = None,
+        destination_if_modified_since: IfModifiedSince | None = None,
+        destination_if_unmodified_since: IfUnmodifiedSince | None = None,
+        source_if_match: RenameSourceIfMatch | None = None,
+        source_if_none_match: RenameSourceIfNoneMatch | None = None,
+        source_if_modified_since: RenameSourceIfModifiedSince | None = None,
+        source_if_unmodified_since: RenameSourceIfUnmodifiedSince | None = None,
+        client_token: ClientToken | None = None,
+        **kwargs,
+    ) -> RenameObjectOutput:
         raise NotImplementedError
 
     @handler("RestoreObject")
@@ -4934,11 +5006,11 @@ class S3Api:
         context: RequestContext,
         bucket: BucketName,
         key: ObjectKey,
-        version_id: ObjectVersionId = None,
-        restore_request: RestoreRequest = None,
-        request_payer: RequestPayer = None,
-        checksum_algorithm: ChecksumAlgorithm = None,
-        expected_bucket_owner: AccountId = None,
+        version_id: ObjectVersionId | None = None,
+        restore_request: RestoreRequest | None = None,
+        request_payer: RequestPayer | None = None,
+        checksum_algorithm: ChecksumAlgorithm | None = None,
+        expected_bucket_owner: AccountId | None = None,
         **kwargs,
     ) -> RestoreObjectOutput:
         raise NotImplementedError
@@ -4953,12 +5025,12 @@ class S3Api:
         expression_type: ExpressionType,
         input_serialization: InputSerialization,
         output_serialization: OutputSerialization,
-        sse_customer_algorithm: SSECustomerAlgorithm = None,
-        sse_customer_key: SSECustomerKey = None,
-        sse_customer_key_md5: SSECustomerKeyMD5 = None,
-        request_progress: RequestProgress = None,
-        scan_range: ScanRange = None,
-        expected_bucket_owner: AccountId = None,
+        sse_customer_algorithm: SSECustomerAlgorithm | None = None,
+        sse_customer_key: SSECustomerKey | None = None,
+        sse_customer_key_md5: SSECustomerKeyMD5 | None = None,
+        request_progress: RequestProgress | None = None,
+        scan_range: ScanRange | None = None,
+        expected_bucket_owner: AccountId | None = None,
         **kwargs,
     ) -> SelectObjectContentOutput:
         raise NotImplementedError
@@ -4971,20 +5043,20 @@ class S3Api:
         key: ObjectKey,
         part_number: PartNumber,
         upload_id: MultipartUploadId,
-        body: IO[Body] = None,
-        content_length: ContentLength = None,
-        content_md5: ContentMD5 = None,
-        checksum_algorithm: ChecksumAlgorithm = None,
-        checksum_crc32: ChecksumCRC32 = None,
-        checksum_crc32_c: ChecksumCRC32C = None,
-        checksum_crc64_nvme: ChecksumCRC64NVME = None,
-        checksum_sha1: ChecksumSHA1 = None,
-        checksum_sha256: ChecksumSHA256 = None,
-        sse_customer_algorithm: SSECustomerAlgorithm = None,
-        sse_customer_key: SSECustomerKey = None,
-        sse_customer_key_md5: SSECustomerKeyMD5 = None,
-        request_payer: RequestPayer = None,
-        expected_bucket_owner: AccountId = None,
+        body: IO[Body] | None = None,
+        content_length: ContentLength | None = None,
+        content_md5: ContentMD5 | None = None,
+        checksum_algorithm: ChecksumAlgorithm | None = None,
+        checksum_crc32: ChecksumCRC32 | None = None,
+        checksum_crc32_c: ChecksumCRC32C | None = None,
+        checksum_crc64_nvme: ChecksumCRC64NVME | None = None,
+        checksum_sha1: ChecksumSHA1 | None = None,
+        checksum_sha256: ChecksumSHA256 | None = None,
+        sse_customer_algorithm: SSECustomerAlgorithm | None = None,
+        sse_customer_key: SSECustomerKey | None = None,
+        sse_customer_key_md5: SSECustomerKeyMD5 | None = None,
+        request_payer: RequestPayer | None = None,
+        expected_bucket_owner: AccountId | None = None,
         **kwargs,
     ) -> UploadPartOutput:
         raise NotImplementedError
@@ -4998,20 +5070,20 @@ class S3Api:
         key: ObjectKey,
         part_number: PartNumber,
         upload_id: MultipartUploadId,
-        copy_source_if_match: CopySourceIfMatch = None,
-        copy_source_if_modified_since: CopySourceIfModifiedSince = None,
-        copy_source_if_none_match: CopySourceIfNoneMatch = None,
-        copy_source_if_unmodified_since: CopySourceIfUnmodifiedSince = None,
-        copy_source_range: CopySourceRange = None,
-        sse_customer_algorithm: SSECustomerAlgorithm = None,
-        sse_customer_key: SSECustomerKey = None,
-        sse_customer_key_md5: SSECustomerKeyMD5 = None,
-        copy_source_sse_customer_algorithm: CopySourceSSECustomerAlgorithm = None,
-        copy_source_sse_customer_key: CopySourceSSECustomerKey = None,
-        copy_source_sse_customer_key_md5: CopySourceSSECustomerKeyMD5 = None,
-        request_payer: RequestPayer = None,
-        expected_bucket_owner: AccountId = None,
-        expected_source_bucket_owner: AccountId = None,
+        copy_source_if_match: CopySourceIfMatch | None = None,
+        copy_source_if_modified_since: CopySourceIfModifiedSince | None = None,
+        copy_source_if_none_match: CopySourceIfNoneMatch | None = None,
+        copy_source_if_unmodified_since: CopySourceIfUnmodifiedSince | None = None,
+        copy_source_range: CopySourceRange | None = None,
+        sse_customer_algorithm: SSECustomerAlgorithm | None = None,
+        sse_customer_key: SSECustomerKey | None = None,
+        sse_customer_key_md5: SSECustomerKeyMD5 | None = None,
+        copy_source_sse_customer_algorithm: CopySourceSSECustomerAlgorithm | None = None,
+        copy_source_sse_customer_key: CopySourceSSECustomerKey | None = None,
+        copy_source_sse_customer_key_md5: CopySourceSSECustomerKeyMD5 | None = None,
+        request_payer: RequestPayer | None = None,
+        expected_bucket_owner: AccountId | None = None,
+        expected_source_bucket_owner: AccountId | None = None,
         **kwargs,
     ) -> UploadPartCopyOutput:
         raise NotImplementedError
@@ -5022,51 +5094,51 @@ class S3Api:
         context: RequestContext,
         request_route: RequestRoute,
         request_token: RequestToken,
-        body: IO[Body] = None,
-        status_code: GetObjectResponseStatusCode = None,
-        error_code: ErrorCode = None,
-        error_message: ErrorMessage = None,
-        accept_ranges: AcceptRanges = None,
-        cache_control: CacheControl = None,
-        content_disposition: ContentDisposition = None,
-        content_encoding: ContentEncoding = None,
-        content_language: ContentLanguage = None,
-        content_length: ContentLength = None,
-        content_range: ContentRange = None,
-        content_type: ContentType = None,
-        checksum_crc32: ChecksumCRC32 = None,
-        checksum_crc32_c: ChecksumCRC32C = None,
-        checksum_crc64_nvme: ChecksumCRC64NVME = None,
-        checksum_sha1: ChecksumSHA1 = None,
-        checksum_sha256: ChecksumSHA256 = None,
-        delete_marker: DeleteMarker = None,
-        e_tag: ETag = None,
-        expires: Expires = None,
-        expiration: Expiration = None,
-        last_modified: LastModified = None,
-        missing_meta: MissingMeta = None,
-        metadata: Metadata = None,
-        object_lock_mode: ObjectLockMode = None,
-        object_lock_legal_hold_status: ObjectLockLegalHoldStatus = None,
-        object_lock_retain_until_date: ObjectLockRetainUntilDate = None,
-        parts_count: PartsCount = None,
-        replication_status: ReplicationStatus = None,
-        request_charged: RequestCharged = None,
-        restore: Restore = None,
-        server_side_encryption: ServerSideEncryption = None,
-        sse_customer_algorithm: SSECustomerAlgorithm = None,
-        ssekms_key_id: SSEKMSKeyId = None,
-        sse_customer_key_md5: SSECustomerKeyMD5 = None,
-        storage_class: StorageClass = None,
-        tag_count: TagCount = None,
-        version_id: ObjectVersionId = None,
-        bucket_key_enabled: BucketKeyEnabled = None,
+        body: IO[Body] | None = None,
+        status_code: GetObjectResponseStatusCode | None = None,
+        error_code: ErrorCode | None = None,
+        error_message: ErrorMessage | None = None,
+        accept_ranges: AcceptRanges | None = None,
+        cache_control: CacheControl | None = None,
+        content_disposition: ContentDisposition | None = None,
+        content_encoding: ContentEncoding | None = None,
+        content_language: ContentLanguage | None = None,
+        content_length: ContentLength | None = None,
+        content_range: ContentRange | None = None,
+        content_type: ContentType | None = None,
+        checksum_crc32: ChecksumCRC32 | None = None,
+        checksum_crc32_c: ChecksumCRC32C | None = None,
+        checksum_crc64_nvme: ChecksumCRC64NVME | None = None,
+        checksum_sha1: ChecksumSHA1 | None = None,
+        checksum_sha256: ChecksumSHA256 | None = None,
+        delete_marker: DeleteMarker | None = None,
+        e_tag: ETag | None = None,
+        expires: Expires | None = None,
+        expiration: Expiration | None = None,
+        last_modified: LastModified | None = None,
+        missing_meta: MissingMeta | None = None,
+        metadata: Metadata | None = None,
+        object_lock_mode: ObjectLockMode | None = None,
+        object_lock_legal_hold_status: ObjectLockLegalHoldStatus | None = None,
+        object_lock_retain_until_date: ObjectLockRetainUntilDate | None = None,
+        parts_count: PartsCount | None = None,
+        replication_status: ReplicationStatus | None = None,
+        request_charged: RequestCharged | None = None,
+        restore: Restore | None = None,
+        server_side_encryption: ServerSideEncryption | None = None,
+        sse_customer_algorithm: SSECustomerAlgorithm | None = None,
+        ssekms_key_id: SSEKMSKeyId | None = None,
+        sse_customer_key_md5: SSECustomerKeyMD5 | None = None,
+        storage_class: StorageClass | None = None,
+        tag_count: TagCount | None = None,
+        version_id: ObjectVersionId | None = None,
+        bucket_key_enabled: BucketKeyEnabled | None = None,
         **kwargs,
     ) -> None:
         raise NotImplementedError
 
     @handler("PostObject")
     def post_object(
-        self, context: RequestContext, bucket: BucketName, body: IO[Body] = None, **kwargs
+        self, context: RequestContext, bucket: BucketName, body: IO[Body] | None = None, **kwargs
     ) -> PostResponse:
         raise NotImplementedError

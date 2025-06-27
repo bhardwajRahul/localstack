@@ -18,6 +18,7 @@ from urllib.parse import SplitResult, parse_qs, quote, urlencode, urlparse, urlu
 from zoneinfo import ZoneInfo
 
 import boto3 as boto3
+import botocore
 import pytest
 import requests
 import xmltodict
@@ -482,7 +483,6 @@ class TestS3:
         assert metadata_saved["Metadata"] == {"test_meta_1": "foo", "__meta_2": "bar"}
 
     @markers.aws.validated
-    @markers.snapshot.skip_snapshot_verify(paths=["$..ChecksumType"])
     def test_upload_file_multipart(self, s3_bucket, tmpdir, snapshot, aws_client):
         snapshot.add_transformer(snapshot.transform.s3_api())
         key = "my-key"
@@ -7434,6 +7434,87 @@ class TestS3PresignedUrl:
         resp = requests.put(rewritten_url, data="something", verify=False)
         assert resp.status_code == 403
 
+    @markers.aws.validated
+    def test_pre_signed_url_if_none_match(self, s3_bucket, aws_client, aws_session):
+        # there currently is a bug in Boto3: https://github.com/boto/boto3/issues/4367
+        # so we need to use botocore directly to allow testing of this, as other SDK like the Java SDK have the correct
+        # behavior
+        object_key = "temp.txt"
+
+        s3_endpoint_path_style = _endpoint_url()
+
+        # assert that the regular Boto3 client does not work, and does not sign the parameter as requested
+        client = _s3_client_pre_signed_client(
+            Config(signature_version="s3v4", s3={}),
+            endpoint_url=s3_endpoint_path_style,
+        )
+        bad_url = client.generate_presigned_url(
+            "put_object",
+            Params={"Bucket": s3_bucket, "Key": object_key, "IfNoneMatch": "*"},
+        )
+        assert "if-none-match=%2a" not in bad_url.lower()
+
+        req = botocore.awsrequest.AWSRequest(
+            method="PUT",
+            url=f"{s3_endpoint_path_style}/{s3_bucket}/{object_key}",
+            data={},
+            params={
+                "If-None-Match": "*",
+            },
+            headers={},
+        )
+
+        botocore.auth.S3SigV4QueryAuth(aws_session.get_credentials(), "s3", "us-east-1").add_auth(
+            req
+        )
+
+        assert "if-none-match=%2a" in req.url.lower()
+
+        response = requests.put(req.url)
+        assert response.status_code == 200
+
+        response = requests.put(req.url)
+        # we are now failing because the object already exists
+        assert response.status_code == 412
+
+    @markers.aws.validated
+    def test_pre_signed_url_if_match(self, s3_bucket, aws_client, aws_session):
+        key = "test-precondition"
+        aws_client.s3.put_object(Bucket=s3_bucket, Key=key, Body="test")
+
+        s3_endpoint_path_style = _endpoint_url()
+        # empty object ETag is provided
+        empty_object_etag = "d41d8cd98f00b204e9800998ecf8427e"
+
+        # assert that the regular Boto3 client does not work, and does not sign the parameter as requested
+        client = _s3_client_pre_signed_client(
+            Config(signature_version="s3v4", s3={}),
+            endpoint_url=s3_endpoint_path_style,
+        )
+        bad_url = client.generate_presigned_url(
+            "put_object",
+            Params={"Bucket": s3_bucket, "Key": key, "IfMatch": empty_object_etag},
+        )
+        assert "if-match=d41d8cd98f00b204e9800998ecf8427e" not in bad_url.lower()
+
+        req = botocore.awsrequest.AWSRequest(
+            method="PUT",
+            url=f"{s3_endpoint_path_style}/{s3_bucket}/{key}",
+            data={},
+            params={
+                "If-Match": empty_object_etag,
+            },
+            headers={},
+        )
+
+        botocore.auth.S3SigV4QueryAuth(aws_session.get_credentials(), "s3", "us-east-1").add_auth(
+            req
+        )
+        assert "if-match=d41d8cd98f00b204e9800998ecf8427e" in req.url.lower()
+
+        response = requests.put(req.url)
+        assert response.status_code == 412
+
 
 class TestS3DeepArchive:
     """
@@ -9125,6 +9206,16 @@ class TestS3ObjectLockRetention:
             )
         snapshot.match("update-retention-past-date", e.value.response)
 
+        # update a retention with a bad ObjectLock Mode
+        with pytest.raises(ClientError) as e:
+            aws_client.s3.put_object_retention(
+                Bucket=s3_bucket_locked,
+                Key=object_key,
+                VersionId=version_id,
+                Retention={"Mode": "BAD-VALUE", "RetainUntilDate": future_datetime},
+            )
+        snapshot.match("update-retention-bad-value", e.value.response)
+
         s3_bucket_basic = s3_create_bucket(ObjectLockEnabledForBucket=False)  # same as default
         aws_client.s3.put_object(Bucket=s3_bucket_basic, Key=object_key, Body="test")
         # put object retention in a object in bucket without lock configured
@@ -9180,7 +9271,6 @@ class TestS3ObjectLockRetention:
             BypassGovernanceRetention=True,
         )
         snapshot.match("delete-obj-locked-bypass", response)
-        # TODO: add retention on delete marker? todo add delete marker on locked object?
 
         put_obj_2 = aws_client.s3.put_object(
             Bucket=s3_bucket_lock,
@@ -9199,7 +9289,8 @@ class TestS3ObjectLockRetention:
                 Key=object_key,
                 Retention={
                     "Mode": "GOVERNANCE",
-                    "RetainUntilDate": datetime.datetime.utcnow() + datetime.timedelta(seconds=5),
+                    "RetainUntilDate": datetime.datetime.now(tz=datetime.UTC)
+                    + datetime.timedelta(seconds=5),
                 },
             )
         snapshot.match("update-retention-locked-object", e.value.response)
@@ -9218,7 +9309,8 @@ class TestS3ObjectLockRetention:
             Key=object_key,
             Retention={
                 "Mode": "GOVERNANCE",
-                "RetainUntilDate": datetime.datetime.utcnow() + datetime.timedelta(seconds=5),
+                "RetainUntilDate": datetime.datetime.now(tz=datetime.UTC)
+                + datetime.timedelta(seconds=5),
             },
         )
         snapshot.match("update-retention-object", update_retention)
@@ -9319,6 +9411,15 @@ class TestS3ObjectLockRetention:
         head_object = aws_client.s3.head_object(Bucket=bucket_name, Key=object_key)
         snapshot.match("head-object-with-lock", head_object)
 
+        with pytest.raises(ClientError) as e:
+            aws_client.s3.put_object(
+                Bucket=bucket_name,
+                Key=object_key + "2",
+                Body="test-put-object-lock",
+                ObjectLockMode="GOVERNANCE",
+            )
+        snapshot.match("put-object-with-lock-no-date", e.value.response)
+
     @markers.aws.validated
     def test_object_lock_delete_markers(self, s3_create_bucket, snapshot, aws_client):
         snapshot.add_transformer(snapshot.transform.key_value("VersionId"))
@@ -9408,6 +9509,131 @@ class TestS3ObjectLockRetention:
                 },
             )
         snapshot.match("put-object-retention-reduce", e.value.response)
+
+    @markers.aws.validated
+    def test_s3_object_retention_compliance_mode(self, aws_client, s3_create_bucket, snapshot):
+        # BEWARE of this test!
+        # using `COMPLIANCE` will make the object virtually *impossible* to delete, so don't set a long duration
+        # for the `RetainUntilDate`
+        # only way to delete the object and indirectly the bucket will be to delete the AWS Account
+        # see https://docs.aws.amazon.com/AmazonS3/latest/userguide/object-lock.html#object-lock-overview
+        # > The only way to delete an object under the compliance mode before its retention date expires is to delete
+        # > the associated AWS account.
+        snapshot.add_transformer(snapshot.transform.key_value("VersionId"))
+        object_key = "test-retention-locked-object"
+
+        s3_bucket_lock = s3_create_bucket(ObjectLockEnabledForBucket=True)
+        put_obj_1 = aws_client.s3.put_object(Bucket=s3_bucket_lock, Key=object_key, Body="test")
+        snapshot.match("put-obj-locked-1", put_obj_1)
+
+        version_id = put_obj_1["VersionId"]
+
+        short_future = datetime.datetime.now(tz=datetime.UTC) + datetime.timedelta(seconds=5)
+
+        update_retention = aws_client.s3.put_object_retention(
+            Bucket=s3_bucket_lock,
+            Key=object_key,
+            Retention={
+                "Mode": "COMPLIANCE",
+                "RetainUntilDate": short_future,
+            },
+        )
+        snapshot.match("add-compliance-retention", update_retention)
+
+        # delete object with retention lock without bypass before 5 seconds
+        with pytest.raises(ClientError) as e:
+            aws_client.s3.delete_object(Bucket=s3_bucket_lock, Key=object_key, VersionId=version_id)
+        snapshot.match("delete-locked-1", e.value.response)
+
+        put_delete_marker = aws_client.s3.delete_object(Bucket=s3_bucket_lock, Key=object_key)
+        snapshot.match("put-delete-marker", put_delete_marker)
+
+        # delete object with retention lock with bypass before 5 seconds
+        with pytest.raises(ClientError) as e:
+            aws_client.s3.delete_object(
+                Bucket=s3_bucket_lock,
+                Key=object_key,
+                VersionId=version_id,
+                BypassGovernanceRetention=True,
+            )
+        snapshot.match("delete-locked-2", e.value.response)
+
+        # update a retention to be lower than the existing one without bypass
+        earlier_datetime = short_future - datetime.timedelta(seconds=1)
+        with pytest.raises(ClientError) as e:
+            aws_client.s3.put_object_retention(
+                Bucket=s3_bucket_lock,
+                Key=object_key,
+                VersionId=version_id,
+                Retention={"Mode": "COMPLIANCE", "RetainUntilDate": earlier_datetime},
+            )
+        snapshot.match("update-retention-shortened", e.value.response)
+
+        # update a retention to be less restrictive than COMPLIANCE
+        earlier_datetime = short_future + datetime.timedelta(seconds=1)
+        with pytest.raises(ClientError) as e:
+            aws_client.s3.put_object_retention(
+                Bucket=s3_bucket_lock,
+                Key=object_key,
+                VersionId=version_id,
+                Retention={"Mode": "GOVERNANCE", "RetainUntilDate": earlier_datetime},
+            )
+        snapshot.match("update-retention-less-restrictive", e.value.response)
+
+        # delete object with lock without bypass after 5 seconds
+        sleep = 10 if is_aws_cloud() else 6
+        time.sleep(sleep)
+
+        response = aws_client.s3.delete_object(
+            Bucket=s3_bucket_lock,
+            Key=object_key,
+            VersionId=version_id,
+        )
+        snapshot.match("delete-obj-after-lock-expiration", response)
+
+    @markers.aws.validated
+    def test_s3_object_lock_mode_validation(self, aws_client, s3_create_bucket, snapshot):
+        snapshot.add_transformer(snapshot.transform.key_value("VersionId"))
+        object_key = "test-retention-validation"
+
+        s3_bucket_lock = s3_create_bucket(ObjectLockEnabledForBucket=True)
+
+        with pytest.raises(ClientError) as e:
+            aws_client.s3.put_object(
+                Bucket=s3_bucket_lock,
+                Key=object_key,
+                Body="test",
+                ObjectLockMode="BAD-VALUE",
+            )
+        snapshot.match("put-obj-locked-error-no-retain-date", e.value.response)
+
+        with pytest.raises(ClientError) as e:
+            aws_client.s3.put_object(
+                Bucket=s3_bucket_lock,
+                Key=object_key,
+                Body="test",
+                ObjectLockRetainUntilDate=datetime.datetime.now() + datetime.timedelta(minutes=10),
+            )
+        snapshot.match("put-obj-locked-error-no-mode", e.value.response)
+
+        with pytest.raises(ClientError) as e:
+            aws_client.s3.put_object(
+                Bucket=s3_bucket_lock,
+                Key=object_key,
+                Body="test",
+                ObjectLockMode="BAD-VALUE",
+                ObjectLockRetainUntilDate=datetime.datetime.now() + datetime.timedelta(minutes=10),
+            )
+        snapshot.match("put-obj-locked-bad-value", e.value.response)
+
+        with pytest.raises(ClientError) as e:
+            aws_client.s3.create_multipart_upload(
+                Bucket=s3_bucket_lock,
+                Key=object_key,
+                ObjectLockMode="BAD-VALUE",
+                ObjectLockRetainUntilDate=datetime.datetime.now() + datetime.timedelta(minutes=10),
+            )
+        snapshot.match("create-mpu-locked-bad-value", e.value.response)
 
 
 class TestS3ObjectLockLegalHold:
@@ -12217,7 +12443,7 @@ class TestS3MultipartUploadChecksum:
         object_attrs = aws_client.s3.get_object_attributes(
             Bucket=s3_bucket,
             Key=key_name,
-            ObjectAttributes=["Checksum", "ETag"],
+            ObjectAttributes=["Checksum", "ETag", "ObjectParts"],
         )
         snapshot.match("get-object-attrs", object_attrs)
 
@@ -12230,7 +12456,7 @@ class TestS3MultipartUploadChecksum:
         object_attrs = aws_client.s3.get_object_attributes(
             Bucket=s3_bucket,
             Key=dest_key,
-            ObjectAttributes=["Checksum", "ETag"],
+            ObjectAttributes=["Checksum", "ETag", "ObjectParts"],
         )
         snapshot.match("get-copy-object-attrs", object_attrs)
 
@@ -12514,7 +12740,7 @@ class TestS3MultipartUploadChecksum:
         object_attrs = aws_client.s3.get_object_attributes(
             Bucket=s3_bucket,
             Key=key_name,
-            ObjectAttributes=["Checksum", "ETag"],
+            ObjectAttributes=["Checksum", "ETag", "ObjectParts"],
         )
         snapshot.match("get-object-attrs", object_attrs)
 
@@ -12527,7 +12753,7 @@ class TestS3MultipartUploadChecksum:
         object_attrs = aws_client.s3.get_object_attributes(
             Bucket=s3_bucket,
             Key=dest_key,
-            ObjectAttributes=["Checksum", "ETag"],
+            ObjectAttributes=["Checksum", "ETag", "ObjectParts"],
         )
         snapshot.match("get-copy-object-attrs", object_attrs)
 
@@ -12796,7 +13022,7 @@ class TestS3MultipartUploadChecksum:
         object_attrs = aws_client.s3.get_object_attributes(
             Bucket=s3_bucket,
             Key=key_name,
-            ObjectAttributes=["Checksum", "ETag"],
+            ObjectAttributes=["Checksum", "ETag", "ObjectParts"],
         )
         snapshot.match("get-object-attrs", object_attrs)
 
@@ -12809,7 +13035,7 @@ class TestS3MultipartUploadChecksum:
         object_attrs = aws_client.s3.get_object_attributes(
             Bucket=s3_bucket,
             Key=dest_key,
-            ObjectAttributes=["Checksum", "ETag"],
+            ObjectAttributes=["Checksum", "ETag", "ObjectParts"],
         )
         snapshot.match("get-copy-object-attrs", object_attrs)
 
@@ -12878,7 +13104,7 @@ class TestS3MultipartUploadChecksum:
         object_attrs = aws_client.s3.get_object_attributes(
             Bucket=s3_bucket,
             Key=key_name,
-            ObjectAttributes=["Checksum", "ETag"],
+            ObjectAttributes=["Checksum", "ETag", "ObjectParts"],
         )
         snapshot.match("get-object-attrs", object_attrs)
 
@@ -12938,6 +13164,87 @@ class TestS3MultipartUploadChecksum:
             Bucket=s3_bucket,
             Key=key_name,
             ObjectAttributes=["Checksum", "ETag"],
+        )
+        snapshot.match("get-object-attrs", object_attrs)
+
+    @markers.aws.validated
+    @pytest.mark.parametrize("checksum_type", ("COMPOSITE", "FULL_OBJECT"))
+    def test_multipart_upload_part_copy_checksum(
+        self, s3_bucket, snapshot, aws_client, checksum_type
+    ):
+        snapshot.add_transformer(
+            [
+                snapshot.transform.key_value("Bucket", reference_replacement=False),
+                snapshot.transform.key_value("Location"),
+                snapshot.transform.key_value("UploadId"),
+                snapshot.transform.key_value("DisplayName", reference_replacement=False),
+                snapshot.transform.key_value("ID", reference_replacement=False),
+            ]
+        )
+
+        part_key = "test-part-checksum"
+        put_object = aws_client.s3.put_object(
+            Bucket=s3_bucket,
+            Key=part_key,
+            Body="this is a part",
+        )
+        snapshot.match("put-object", put_object)
+
+        key_name = "test-multipart-checksum"
+        response = aws_client.s3.create_multipart_upload(
+            Bucket=s3_bucket, Key=key_name, ChecksumAlgorithm="CRC32C", ChecksumType=checksum_type
+        )
+        snapshot.match("create-mpu-checksum-sha256", response)
+        upload_id = response["UploadId"]
+
+        copy_source_key = f"{s3_bucket}/{part_key}"
+        upload_part_copy = aws_client.s3.upload_part_copy(
+            Bucket=s3_bucket,
+            UploadId=upload_id,
+            Key=key_name,
+            PartNumber=1,
+            CopySource=copy_source_key,
+        )
+        snapshot.match("upload-part-copy", upload_part_copy)
+
+        list_parts = aws_client.s3.list_parts(
+            Bucket=s3_bucket,
+            UploadId=upload_id,
+            Key=key_name,
+        )
+        snapshot.match("list-parts", list_parts)
+
+        # complete with no checksum type specified, just all default values
+        response = aws_client.s3.complete_multipart_upload(
+            Bucket=s3_bucket,
+            Key=key_name,
+            MultipartUpload={
+                "Parts": [
+                    {
+                        "ETag": upload_part_copy["CopyPartResult"]["ETag"],
+                        "PartNumber": 1,
+                        "ChecksumCRC32C": upload_part_copy["CopyPartResult"]["ChecksumCRC32C"],
+                    }
+                ]
+            },
+            UploadId=upload_id,
+        )
+        snapshot.match("complete-multipart-checksum", response)
+
+        get_object_with_checksum = aws_client.s3.get_object(
+            Bucket=s3_bucket, Key=key_name, ChecksumMode="ENABLED"
+        )
+        snapshot.match("get-object-with-checksum", get_object_with_checksum)
+
+        head_object_with_checksum = aws_client.s3.head_object(
+            Bucket=s3_bucket, Key=key_name, ChecksumMode="ENABLED"
+        )
+        snapshot.match("head-object-with-checksum", head_object_with_checksum)
+
+        object_attrs = aws_client.s3.get_object_attributes(
+            Bucket=s3_bucket,
+            Key=key_name,
+            ObjectAttributes=["Checksum", "ETag", "ObjectParts"],
         )
         snapshot.match("get-object-attrs", object_attrs)
 

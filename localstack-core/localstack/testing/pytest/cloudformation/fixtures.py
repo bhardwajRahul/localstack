@@ -1,32 +1,99 @@
 import json
 from collections import defaultdict
-from typing import Callable
+from typing import Callable, Optional, TypedDict
 
 import pytest
 
-from localstack.aws.api.cloudformation import StackEvent
+from localstack.aws.api.cloudformation import DescribeChangeSetOutput, StackEvent
 from localstack.aws.connect import ServiceLevelClientFactory
 from localstack.utils.functions import call_safe
 from localstack.utils.strings import short_uid
 
-PerResourceStackEvents = dict[str, list[StackEvent]]
+
+class NormalizedEvent(TypedDict):
+    PhysicalResourceId: Optional[str]
+    LogicalResourceId: str
+    ResourceType: str
+    ResourceStatus: str
+    Timestamp: str
+
+
+PerResourceStackEvents = dict[str, list[NormalizedEvent]]
+
+
+def normalize_event(event: StackEvent) -> NormalizedEvent:
+    return NormalizedEvent(
+        PhysicalResourceId=event.get("PhysicalResourceId"),
+        LogicalResourceId=event.get("LogicalResourceId"),
+        ResourceType=event.get("ResourceType"),
+        ResourceStatus=event.get("ResourceStatus"),
+        Timestamp=event.get("Timestamp"),
+    )
 
 
 @pytest.fixture
 def capture_per_resource_events(
     aws_client: ServiceLevelClientFactory,
 ) -> Callable[[str], PerResourceStackEvents]:
-    def capture(stack_name: str) -> PerResourceStackEvents:
+    def capture(stack_name: str) -> dict:
         events = aws_client.cloudformation.describe_stack_events(StackName=stack_name)[
             "StackEvents"
         ]
         per_resource_events = defaultdict(list)
         for event in events:
+            # TODO: not supported events
+            if event.get("ResourceStatus") in {
+                "UPDATE_COMPLETE_CLEANUP_IN_PROGRESS",
+                "DELETE_IN_PROGRESS",
+                "DELETE_COMPLETE",
+            }:
+                continue
+
             if logical_resource_id := event.get("LogicalResourceId"):
-                per_resource_events[logical_resource_id].append(event)
-        return per_resource_events
+                resource_name = (
+                    logical_resource_id
+                    if logical_resource_id != event.get("StackName")
+                    else "Stack"
+                )
+                normalized_event = normalize_event(event)
+                per_resource_events[resource_name].append(normalized_event)
+
+        for resource_id in per_resource_events:
+            per_resource_events[resource_id].sort(key=lambda event: event["Timestamp"])
+
+        filtered_per_resource_events = {}
+        for resource_id in per_resource_events:
+            events = []
+            last: tuple[str, str, str] | None = None
+
+            for event in per_resource_events[resource_id]:
+                unique_key = (
+                    event["LogicalResourceId"],
+                    event["ResourceStatus"],
+                    event["ResourceType"],
+                )
+                if last is None:
+                    events.append(event)
+                    last = unique_key
+                    continue
+
+                if unique_key == last:
+                    continue
+
+                events.append(event)
+                last = unique_key
+
+            filtered_per_resource_events[resource_id] = events
+
+        return filtered_per_resource_events
 
     return capture
+
+
+def _normalise_describe_change_set_output(value: DescribeChangeSetOutput) -> None:
+    value.get("Changes", list()).sort(
+        key=lambda change: change.get("ResourceChange", dict()).get("LogicalResourceId", str())
+    )
 
 
 @pytest.fixture
@@ -84,12 +151,15 @@ def capture_update_process(aws_client_no_retry, cleanups, capture_per_resource_e
                 ChangeSetName=change_set_id, IncludePropertyValues=True
             )
         )
+        _normalise_describe_change_set_output(describe_change_set_with_prop_values)
         snapshot.match("describe-change-set-1-prop-values", describe_change_set_with_prop_values)
+
         describe_change_set_without_prop_values = (
             aws_client_no_retry.cloudformation.describe_change_set(
                 ChangeSetName=change_set_id, IncludePropertyValues=False
             )
         )
+        _normalise_describe_change_set_output(describe_change_set_without_prop_values)
         snapshot.match("describe-change-set-1", describe_change_set_without_prop_values)
 
         execute_results = aws_client_no_retry.cloudformation.execute_change_set(
@@ -132,12 +202,15 @@ def capture_update_process(aws_client_no_retry, cleanups, capture_per_resource_e
                 ChangeSetName=change_set_id, IncludePropertyValues=True
             )
         )
+        _normalise_describe_change_set_output(describe_change_set_with_prop_values)
         snapshot.match("describe-change-set-2-prop-values", describe_change_set_with_prop_values)
+
         describe_change_set_without_prop_values = (
             aws_client_no_retry.cloudformation.describe_change_set(
                 ChangeSetName=change_set_id, IncludePropertyValues=False
             )
         )
+        _normalise_describe_change_set_output(describe_change_set_without_prop_values)
         snapshot.match("describe-change-set-2", describe_change_set_without_prop_values)
 
         execute_results = aws_client_no_retry.cloudformation.execute_change_set(
@@ -153,9 +226,6 @@ def capture_update_process(aws_client_no_retry, cleanups, capture_per_resource_e
         ]
         snapshot.match("post-create-2-describe", describe)
 
-        events = capture_per_resource_events(stack_name)
-        snapshot.match("per-resource-events", events)
-
         # delete stack
         aws_client_no_retry.cloudformation.delete_stack(StackName=stack_id)
         aws_client_no_retry.cloudformation.get_waiter("stack_delete_complete").wait(
@@ -165,5 +235,8 @@ def capture_update_process(aws_client_no_retry, cleanups, capture_per_resource_e
             0
         ]
         snapshot.match("delete-describe", describe)
+
+        events = capture_per_resource_events(stack_id)
+        snapshot.match("per-resource-events", events)
 
     yield inner

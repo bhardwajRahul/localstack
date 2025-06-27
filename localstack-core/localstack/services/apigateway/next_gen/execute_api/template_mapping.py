@@ -23,15 +23,16 @@ from urllib.parse import quote_plus, unquote_plus
 
 import airspeed
 from airspeed.operators import dict_to_string
+from jsonpath_rw import parse
 
 from localstack import config
 from localstack.services.apigateway.next_gen.execute_api.variables import (
+    ContextVariableOverrides,
     ContextVariables,
-    ContextVarsRequestOverride,
     ContextVarsResponseOverride,
 )
 from localstack.utils.aws.templating import APIGW_SOURCE, VelocityUtil, VtlTemplate
-from localstack.utils.json import extract_jsonpath, json_safe
+from localstack.utils.json import json_safe
 
 LOG = logging.getLogger(__name__)
 
@@ -67,6 +68,15 @@ def cast_to_vtl_json_object(value: Any) -> Any:
     if isinstance(value, list):
         return VTLJsonList(value)
     return value
+
+
+def extract_jsonpath(value: dict | list, path: str):
+    jsonpath_expr = parse(path)
+    result = [match.value for match in jsonpath_expr.find(value)]
+    if not result:
+        return None
+    result = result[0] if len(result) == 1 else result
+    return result
 
 
 class VTLMap(dict):
@@ -211,8 +221,15 @@ class VelocityInput:
 
     def _extract_json_path(self, path):
         if not self.value:
-            return {}
-        value = self.value if isinstance(self.value, dict) else json.loads(self.value)
+            return None
+        if isinstance(self.value, dict):
+            value = self.value
+        else:
+            try:
+                value = json.loads(self.value)
+            except json.JSONDecodeError:
+                return None
+
         return extract_jsonpath(value, path)
 
     def path(self, path):
@@ -221,7 +238,9 @@ class VelocityInput:
     def json(self, path):
         path = path or "$"
         matching = self._extract_json_path(path)
-        if isinstance(matching, (list, dict)):
+        if matching is None:
+            matching = ""
+        elif isinstance(matching, (list, dict)):
             matching = json_safe(matching)
         return json.dumps(matching)
 
@@ -261,22 +280,27 @@ class ApiGatewayVtlTemplate(VtlTemplate):
         return namespace
 
     def render_request(
-        self, template: str, variables: MappingTemplateVariables
-    ) -> tuple[str, ContextVarsRequestOverride]:
+        self,
+        template: str,
+        variables: MappingTemplateVariables,
+        context_overrides: ContextVariableOverrides,
+    ) -> tuple[str, ContextVariableOverrides]:
         variables_copy: MappingTemplateVariables = copy.deepcopy(variables)
-        variables_copy["context"]["requestOverride"] = ContextVarsRequestOverride(
-            querystring={}, header={}, path={}
-        )
+        variables_copy["context"].update(copy.deepcopy(context_overrides))
         result = self.render_vtl(template=template.strip(), variables=variables_copy)
-        return result, variables_copy["context"]["requestOverride"]
+        return result, ContextVariableOverrides(
+            requestOverride=variables_copy["context"]["requestOverride"],
+            responseOverride=variables_copy["context"]["responseOverride"],
+        )
 
     def render_response(
-        self, template: str, variables: MappingTemplateVariables
+        self,
+        template: str,
+        variables: MappingTemplateVariables,
+        context_overrides: ContextVariableOverrides,
     ) -> tuple[str, ContextVarsResponseOverride]:
         variables_copy: MappingTemplateVariables = copy.deepcopy(variables)
-        variables_copy["context"]["responseOverride"] = ContextVarsResponseOverride(
-            header={}, status=0
-        )
+        variables_copy["context"].update(copy.deepcopy(context_overrides))
         result = self.render_vtl(template=template.strip(), variables=variables_copy)
         return result, variables_copy["context"]["responseOverride"]
 
