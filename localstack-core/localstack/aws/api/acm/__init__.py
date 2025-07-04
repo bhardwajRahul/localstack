@@ -23,6 +23,11 @@ TagValue = str
 ValidationExceptionMessage = str
 
 
+class CertificateExport(StrEnum):
+    ENABLED = "ENABLED"
+    DISABLED = "DISABLED"
+
+
 class CertificateManagedBy(StrEnum):
     CLOUDFRONT = "CLOUDFRONT"
 
@@ -273,6 +278,7 @@ CertificateChainBlob = bytes
 
 class CertificateOptions(TypedDict, total=False):
     CertificateTransparencyLoggingPreference: Optional[CertificateTransparencyLoggingPreference]
+    Export: Optional[CertificateExport]
 
 
 class ExtendedKeyUsage(TypedDict, total=False):
@@ -374,6 +380,7 @@ class CertificateSummary(TypedDict, total=False):
     KeyAlgorithm: Optional[KeyAlgorithm]
     KeyUsages: Optional[KeyUsageNames]
     ExtendedKeyUsages: Optional[ExtendedKeyUsageNames]
+    ExportOption: Optional[CertificateExport]
     InUse: Optional[NullableBoolean]
     Exported: Optional[NullableBoolean]
     RenewalEligibility: Optional[RenewalEligibility]
@@ -436,6 +443,7 @@ class Filters(TypedDict, total=False):
     extendedKeyUsage: Optional[ExtendedKeyUsageFilterList]
     keyUsage: Optional[KeyUsageFilterList]
     keyTypes: Optional[KeyAlgorithmList]
+    exportOption: Optional[CertificateExport]
     managedBy: Optional[CertificateManagedBy]
 
 
@@ -526,6 +534,15 @@ class ResendValidationEmailRequest(ServiceRequest):
     ValidationDomain: DomainNameString
 
 
+class RevokeCertificateRequest(ServiceRequest):
+    CertificateArn: Arn
+    RevocationReason: RevocationReason
+
+
+class RevokeCertificateResponse(TypedDict, total=False):
+    CertificateArn: Optional[Arn]
+
+
 class UpdateCertificateOptionsRequest(ServiceRequest):
     CertificateArn: Arn
     Options: CertificateOptions
@@ -575,9 +592,9 @@ class AcmApi:
         context: RequestContext,
         certificate: CertificateBodyBlob,
         private_key: PrivateKeyBlob,
-        certificate_arn: Arn = None,
-        certificate_chain: CertificateChainBlob = None,
-        tags: TagList = None,
+        certificate_arn: Arn | None = None,
+        certificate_chain: CertificateChainBlob | None = None,
+        tags: TagList | None = None,
         **kwargs,
     ) -> ImportCertificateResponse:
         raise NotImplementedError
@@ -586,12 +603,12 @@ class AcmApi:
     def list_certificates(
         self,
         context: RequestContext,
-        certificate_statuses: CertificateStatuses = None,
-        includes: Filters = None,
-        next_token: NextToken = None,
-        max_items: MaxItems = None,
-        sort_by: SortBy = None,
-        sort_order: SortOrder = None,
+        certificate_statuses: CertificateStatuses | None = None,
+        includes: Filters | None = None,
+        next_token: NextToken | None = None,
+        max_items: MaxItems | None = None,
+        sort_by: SortBy | None = None,
+        sort_order: SortOrder | None = None,
         **kwargs,
     ) -> ListCertificatesResponse:
         raise NotImplementedError
@@ -607,7 +624,7 @@ class AcmApi:
         self,
         context: RequestContext,
         idempotency_token: IdempotencyToken,
-        expiry_events: ExpiryEventsConfiguration = None,
+        expiry_events: ExpiryEventsConfiguration | None = None,
         **kwargs,
     ) -> None:
         raise NotImplementedError
@@ -627,15 +644,15 @@ class AcmApi:
         self,
         context: RequestContext,
         domain_name: DomainNameString,
-        validation_method: ValidationMethod = None,
-        subject_alternative_names: DomainList = None,
-        idempotency_token: IdempotencyToken = None,
-        domain_validation_options: DomainValidationOptionList = None,
-        options: CertificateOptions = None,
-        certificate_authority_arn: PcaArn = None,
-        tags: TagList = None,
-        key_algorithm: KeyAlgorithm = None,
-        managed_by: CertificateManagedBy = None,
+        validation_method: ValidationMethod | None = None,
+        subject_alternative_names: DomainList | None = None,
+        idempotency_token: IdempotencyToken | None = None,
+        domain_validation_options: DomainValidationOptionList | None = None,
+        options: CertificateOptions | None = None,
+        certificate_authority_arn: PcaArn | None = None,
+        tags: TagList | None = None,
+        key_algorithm: KeyAlgorithm | None = None,
+        managed_by: CertificateManagedBy | None = None,
         **kwargs,
     ) -> RequestCertificateResponse:
         raise NotImplementedError
@@ -649,6 +666,16 @@ class AcmApi:
         validation_domain: DomainNameString,
         **kwargs,
     ) -> None:
+        raise NotImplementedError
+
+    @handler("RevokeCertificate")
+    def revoke_certificate(
+        self,
+        context: RequestContext,
+        certificate_arn: Arn,
+        revocation_reason: RevocationReason,
+        **kwargs,
+    ) -> RevokeCertificateResponse:
         raise NotImplementedError
 
     @handler("UpdateCertificateOptions")

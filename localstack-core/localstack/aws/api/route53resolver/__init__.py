@@ -10,6 +10,7 @@ BlockOverrideTtl = int
 Boolean = bool
 Count = int
 CreatorRequestId = str
+DelegationRecord = str
 DestinationArn = str
 DomainListFileUrl = str
 DomainName = str
@@ -139,6 +140,7 @@ class IpAddressStatus(StrEnum):
     DELETE_FAILED_FAS_EXPIRED = "DELETE_FAILED_FAS_EXPIRED"
     UPDATING = "UPDATING"
     UPDATE_FAILED = "UPDATE_FAILED"
+    ISOLATED = "ISOLATED"
 
 
 class MutationProtectionStatus(StrEnum):
@@ -183,6 +185,7 @@ class ResolverDNSSECValidationStatus(StrEnum):
 class ResolverEndpointDirection(StrEnum):
     INBOUND = "INBOUND"
     OUTBOUND = "OUTBOUND"
+    INBOUND_DELEGATION = "INBOUND_DELEGATION"
 
 
 class ResolverEndpointStatus(StrEnum):
@@ -241,6 +244,7 @@ class RuleTypeOption(StrEnum):
     FORWARD = "FORWARD"
     SYSTEM = "SYSTEM"
     RECURSIVE = "RECURSIVE"
+    DELEGATE = "DELEGATE"
 
 
 class ShareStatus(StrEnum):
@@ -667,6 +671,7 @@ class CreateResolverRuleRequest(ServiceRequest):
     TargetIps: Optional[TargetList]
     ResolverEndpointId: Optional[ResourceId]
     Tags: Optional[TagList]
+    DelegationRecord: Optional[DelegationRecord]
 
 
 class ResolverRule(TypedDict, total=False):
@@ -684,6 +689,7 @@ class ResolverRule(TypedDict, total=False):
     ShareStatus: Optional[ShareStatus]
     CreationTime: Optional[Rfc3339TimeString]
     ModificationTime: Optional[Rfc3339TimeString]
+    DelegationRecord: Optional[DelegationRecord]
 
 
 class CreateResolverRuleResponse(TypedDict, total=False):
@@ -1384,8 +1390,8 @@ class Route53ResolverApi:
         vpc_id: ResourceId,
         priority: Priority,
         name: Name,
-        mutation_protection: MutationProtectionStatus = None,
-        tags: TagList = None,
+        mutation_protection: MutationProtectionStatus | None = None,
+        tags: TagList | None = None,
         **kwargs,
     ) -> AssociateFirewallRuleGroupResponse:
         raise NotImplementedError
@@ -1416,7 +1422,7 @@ class Route53ResolverApi:
         context: RequestContext,
         resolver_rule_id: ResourceId,
         vpc_id: ResourceId,
-        name: Name = None,
+        name: Name | None = None,
         **kwargs,
     ) -> AssociateResolverRuleResponse:
         raise NotImplementedError
@@ -1427,7 +1433,7 @@ class Route53ResolverApi:
         context: RequestContext,
         creator_request_id: CreatorRequestId,
         name: Name,
-        tags: TagList = None,
+        tags: TagList | None = None,
         **kwargs,
     ) -> CreateFirewallDomainListResponse:
         raise NotImplementedError
@@ -1441,15 +1447,15 @@ class Route53ResolverApi:
         priority: Priority,
         action: Action,
         name: Name,
-        firewall_domain_list_id: ResourceId = None,
-        block_response: BlockResponse = None,
-        block_override_domain: BlockOverrideDomain = None,
-        block_override_dns_type: BlockOverrideDnsType = None,
-        block_override_ttl: BlockOverrideTtl = None,
-        firewall_domain_redirection_action: FirewallDomainRedirectionAction = None,
-        qtype: Qtype = None,
-        dns_threat_protection: DnsThreatProtection = None,
-        confidence_threshold: ConfidenceThreshold = None,
+        firewall_domain_list_id: ResourceId | None = None,
+        block_response: BlockResponse | None = None,
+        block_override_domain: BlockOverrideDomain | None = None,
+        block_override_dns_type: BlockOverrideDnsType | None = None,
+        block_override_ttl: BlockOverrideTtl | None = None,
+        firewall_domain_redirection_action: FirewallDomainRedirectionAction | None = None,
+        qtype: Qtype | None = None,
+        dns_threat_protection: DnsThreatProtection | None = None,
+        confidence_threshold: ConfidenceThreshold | None = None,
         **kwargs,
     ) -> CreateFirewallRuleResponse:
         raise NotImplementedError
@@ -1460,7 +1466,7 @@ class Route53ResolverApi:
         context: RequestContext,
         creator_request_id: CreatorRequestId,
         name: Name,
-        tags: TagList = None,
+        tags: TagList | None = None,
         **kwargs,
     ) -> CreateFirewallRuleGroupResponse:
         raise NotImplementedError
@@ -1473,8 +1479,8 @@ class Route53ResolverApi:
         name: OutpostResolverName,
         preferred_instance_type: OutpostInstanceType,
         outpost_arn: OutpostArn,
-        instance_count: InstanceCount = None,
-        tags: TagList = None,
+        instance_count: InstanceCount | None = None,
+        tags: TagList | None = None,
         **kwargs,
     ) -> CreateOutpostResolverResponse:
         raise NotImplementedError
@@ -1487,12 +1493,12 @@ class Route53ResolverApi:
         security_group_ids: SecurityGroupIds,
         direction: ResolverEndpointDirection,
         ip_addresses: IpAddressesRequest,
-        name: Name = None,
-        outpost_arn: OutpostArn = None,
-        preferred_instance_type: OutpostInstanceType = None,
-        tags: TagList = None,
-        resolver_endpoint_type: ResolverEndpointType = None,
-        protocols: ProtocolList = None,
+        name: Name | None = None,
+        outpost_arn: OutpostArn | None = None,
+        preferred_instance_type: OutpostInstanceType | None = None,
+        tags: TagList | None = None,
+        resolver_endpoint_type: ResolverEndpointType | None = None,
+        protocols: ProtocolList | None = None,
         **kwargs,
     ) -> CreateResolverEndpointResponse:
         raise NotImplementedError
@@ -1504,7 +1510,7 @@ class Route53ResolverApi:
         name: ResolverQueryLogConfigName,
         destination_arn: DestinationArn,
         creator_request_id: CreatorRequestId,
-        tags: TagList = None,
+        tags: TagList | None = None,
         **kwargs,
     ) -> CreateResolverQueryLogConfigResponse:
         raise NotImplementedError
@@ -1515,11 +1521,12 @@ class Route53ResolverApi:
         context: RequestContext,
         creator_request_id: CreatorRequestId,
         rule_type: RuleTypeOption,
-        name: Name = None,
-        domain_name: DomainName = None,
-        target_ips: TargetList = None,
-        resolver_endpoint_id: ResourceId = None,
-        tags: TagList = None,
+        name: Name | None = None,
+        domain_name: DomainName | None = None,
+        target_ips: TargetList | None = None,
+        resolver_endpoint_id: ResourceId | None = None,
+        tags: TagList | None = None,
+        delegation_record: DelegationRecord | None = None,
         **kwargs,
     ) -> CreateResolverRuleResponse:
         raise NotImplementedError
@@ -1535,9 +1542,9 @@ class Route53ResolverApi:
         self,
         context: RequestContext,
         firewall_rule_group_id: ResourceId,
-        firewall_domain_list_id: ResourceId = None,
-        firewall_threat_protection_id: ResourceId = None,
-        qtype: Qtype = None,
+        firewall_domain_list_id: ResourceId | None = None,
+        firewall_threat_protection_id: ResourceId | None = None,
+        qtype: Qtype | None = None,
         **kwargs,
     ) -> DeleteFirewallRuleResponse:
         raise NotImplementedError
@@ -1712,8 +1719,8 @@ class Route53ResolverApi:
     def list_firewall_configs(
         self,
         context: RequestContext,
-        max_results: ListFirewallConfigsMaxResult = None,
-        next_token: NextToken = None,
+        max_results: ListFirewallConfigsMaxResult | None = None,
+        next_token: NextToken | None = None,
         **kwargs,
     ) -> ListFirewallConfigsResponse:
         raise NotImplementedError
@@ -1722,8 +1729,8 @@ class Route53ResolverApi:
     def list_firewall_domain_lists(
         self,
         context: RequestContext,
-        max_results: MaxResults = None,
-        next_token: NextToken = None,
+        max_results: MaxResults | None = None,
+        next_token: NextToken | None = None,
         **kwargs,
     ) -> ListFirewallDomainListsResponse:
         raise NotImplementedError
@@ -1733,8 +1740,8 @@ class Route53ResolverApi:
         self,
         context: RequestContext,
         firewall_domain_list_id: ResourceId,
-        max_results: ListDomainMaxResults = None,
-        next_token: NextToken = None,
+        max_results: ListDomainMaxResults | None = None,
+        next_token: NextToken | None = None,
         **kwargs,
     ) -> ListFirewallDomainsResponse:
         raise NotImplementedError
@@ -1743,12 +1750,12 @@ class Route53ResolverApi:
     def list_firewall_rule_group_associations(
         self,
         context: RequestContext,
-        firewall_rule_group_id: ResourceId = None,
-        vpc_id: ResourceId = None,
-        priority: Priority = None,
-        status: FirewallRuleGroupAssociationStatus = None,
-        max_results: MaxResults = None,
-        next_token: NextToken = None,
+        firewall_rule_group_id: ResourceId | None = None,
+        vpc_id: ResourceId | None = None,
+        priority: Priority | None = None,
+        status: FirewallRuleGroupAssociationStatus | None = None,
+        max_results: MaxResults | None = None,
+        next_token: NextToken | None = None,
         **kwargs,
     ) -> ListFirewallRuleGroupAssociationsResponse:
         raise NotImplementedError
@@ -1757,8 +1764,8 @@ class Route53ResolverApi:
     def list_firewall_rule_groups(
         self,
         context: RequestContext,
-        max_results: MaxResults = None,
-        next_token: NextToken = None,
+        max_results: MaxResults | None = None,
+        next_token: NextToken | None = None,
         **kwargs,
     ) -> ListFirewallRuleGroupsResponse:
         raise NotImplementedError
@@ -1768,10 +1775,10 @@ class Route53ResolverApi:
         self,
         context: RequestContext,
         firewall_rule_group_id: ResourceId,
-        priority: Priority = None,
-        action: Action = None,
-        max_results: MaxResults = None,
-        next_token: NextToken = None,
+        priority: Priority | None = None,
+        action: Action | None = None,
+        max_results: MaxResults | None = None,
+        next_token: NextToken | None = None,
         **kwargs,
     ) -> ListFirewallRulesResponse:
         raise NotImplementedError
@@ -1780,9 +1787,9 @@ class Route53ResolverApi:
     def list_outpost_resolvers(
         self,
         context: RequestContext,
-        outpost_arn: OutpostArn = None,
-        max_results: MaxResults = None,
-        next_token: NextToken = None,
+        outpost_arn: OutpostArn | None = None,
+        max_results: MaxResults | None = None,
+        next_token: NextToken | None = None,
         **kwargs,
     ) -> ListOutpostResolversResponse:
         raise NotImplementedError
@@ -1791,8 +1798,8 @@ class Route53ResolverApi:
     def list_resolver_configs(
         self,
         context: RequestContext,
-        max_results: ListResolverConfigsMaxResult = None,
-        next_token: NextToken = None,
+        max_results: ListResolverConfigsMaxResult | None = None,
+        next_token: NextToken | None = None,
         **kwargs,
     ) -> ListResolverConfigsResponse:
         raise NotImplementedError
@@ -1801,9 +1808,9 @@ class Route53ResolverApi:
     def list_resolver_dnssec_configs(
         self,
         context: RequestContext,
-        max_results: MaxResults = None,
-        next_token: NextToken = None,
-        filters: Filters = None,
+        max_results: MaxResults | None = None,
+        next_token: NextToken | None = None,
+        filters: Filters | None = None,
         **kwargs,
     ) -> ListResolverDnssecConfigsResponse:
         raise NotImplementedError
@@ -1813,8 +1820,8 @@ class Route53ResolverApi:
         self,
         context: RequestContext,
         resolver_endpoint_id: ResourceId,
-        max_results: MaxResults = None,
-        next_token: NextToken = None,
+        max_results: MaxResults | None = None,
+        next_token: NextToken | None = None,
         **kwargs,
     ) -> ListResolverEndpointIpAddressesResponse:
         raise NotImplementedError
@@ -1823,9 +1830,9 @@ class Route53ResolverApi:
     def list_resolver_endpoints(
         self,
         context: RequestContext,
-        max_results: MaxResults = None,
-        next_token: NextToken = None,
-        filters: Filters = None,
+        max_results: MaxResults | None = None,
+        next_token: NextToken | None = None,
+        filters: Filters | None = None,
         **kwargs,
     ) -> ListResolverEndpointsResponse:
         raise NotImplementedError
@@ -1834,11 +1841,11 @@ class Route53ResolverApi:
     def list_resolver_query_log_config_associations(
         self,
         context: RequestContext,
-        max_results: MaxResults = None,
-        next_token: NextToken = None,
-        filters: Filters = None,
-        sort_by: SortByKey = None,
-        sort_order: SortOrder = None,
+        max_results: MaxResults | None = None,
+        next_token: NextToken | None = None,
+        filters: Filters | None = None,
+        sort_by: SortByKey | None = None,
+        sort_order: SortOrder | None = None,
         **kwargs,
     ) -> ListResolverQueryLogConfigAssociationsResponse:
         raise NotImplementedError
@@ -1847,11 +1854,11 @@ class Route53ResolverApi:
     def list_resolver_query_log_configs(
         self,
         context: RequestContext,
-        max_results: MaxResults = None,
-        next_token: NextToken = None,
-        filters: Filters = None,
-        sort_by: SortByKey = None,
-        sort_order: SortOrder = None,
+        max_results: MaxResults | None = None,
+        next_token: NextToken | None = None,
+        filters: Filters | None = None,
+        sort_by: SortByKey | None = None,
+        sort_order: SortOrder | None = None,
         **kwargs,
     ) -> ListResolverQueryLogConfigsResponse:
         raise NotImplementedError
@@ -1860,9 +1867,9 @@ class Route53ResolverApi:
     def list_resolver_rule_associations(
         self,
         context: RequestContext,
-        max_results: MaxResults = None,
-        next_token: NextToken = None,
-        filters: Filters = None,
+        max_results: MaxResults | None = None,
+        next_token: NextToken | None = None,
+        filters: Filters | None = None,
         **kwargs,
     ) -> ListResolverRuleAssociationsResponse:
         raise NotImplementedError
@@ -1871,9 +1878,9 @@ class Route53ResolverApi:
     def list_resolver_rules(
         self,
         context: RequestContext,
-        max_results: MaxResults = None,
-        next_token: NextToken = None,
-        filters: Filters = None,
+        max_results: MaxResults | None = None,
+        next_token: NextToken | None = None,
+        filters: Filters | None = None,
         **kwargs,
     ) -> ListResolverRulesResponse:
         raise NotImplementedError
@@ -1883,8 +1890,8 @@ class Route53ResolverApi:
         self,
         context: RequestContext,
         resource_arn: Arn,
-        max_results: MaxResults = None,
-        next_token: NextToken = None,
+        max_results: MaxResults | None = None,
+        next_token: NextToken | None = None,
         **kwargs,
     ) -> ListTagsForResourceResponse:
         raise NotImplementedError
@@ -1953,19 +1960,19 @@ class Route53ResolverApi:
         self,
         context: RequestContext,
         firewall_rule_group_id: ResourceId,
-        firewall_domain_list_id: ResourceId = None,
-        firewall_threat_protection_id: ResourceId = None,
-        priority: Priority = None,
-        action: Action = None,
-        block_response: BlockResponse = None,
-        block_override_domain: BlockOverrideDomain = None,
-        block_override_dns_type: BlockOverrideDnsType = None,
-        block_override_ttl: BlockOverrideTtl = None,
-        name: Name = None,
-        firewall_domain_redirection_action: FirewallDomainRedirectionAction = None,
-        qtype: Qtype = None,
-        dns_threat_protection: DnsThreatProtection = None,
-        confidence_threshold: ConfidenceThreshold = None,
+        firewall_domain_list_id: ResourceId | None = None,
+        firewall_threat_protection_id: ResourceId | None = None,
+        priority: Priority | None = None,
+        action: Action | None = None,
+        block_response: BlockResponse | None = None,
+        block_override_domain: BlockOverrideDomain | None = None,
+        block_override_dns_type: BlockOverrideDnsType | None = None,
+        block_override_ttl: BlockOverrideTtl | None = None,
+        name: Name | None = None,
+        firewall_domain_redirection_action: FirewallDomainRedirectionAction | None = None,
+        qtype: Qtype | None = None,
+        dns_threat_protection: DnsThreatProtection | None = None,
+        confidence_threshold: ConfidenceThreshold | None = None,
         **kwargs,
     ) -> UpdateFirewallRuleResponse:
         raise NotImplementedError
@@ -1975,9 +1982,9 @@ class Route53ResolverApi:
         self,
         context: RequestContext,
         firewall_rule_group_association_id: ResourceId,
-        priority: Priority = None,
-        mutation_protection: MutationProtectionStatus = None,
-        name: Name = None,
+        priority: Priority | None = None,
+        mutation_protection: MutationProtectionStatus | None = None,
+        name: Name | None = None,
         **kwargs,
     ) -> UpdateFirewallRuleGroupAssociationResponse:
         raise NotImplementedError
@@ -1987,9 +1994,9 @@ class Route53ResolverApi:
         self,
         context: RequestContext,
         id: ResourceId,
-        name: OutpostResolverName = None,
-        instance_count: InstanceCount = None,
-        preferred_instance_type: OutpostInstanceType = None,
+        name: OutpostResolverName | None = None,
+        instance_count: InstanceCount | None = None,
+        preferred_instance_type: OutpostInstanceType | None = None,
         **kwargs,
     ) -> UpdateOutpostResolverResponse:
         raise NotImplementedError
@@ -2015,10 +2022,10 @@ class Route53ResolverApi:
         self,
         context: RequestContext,
         resolver_endpoint_id: ResourceId,
-        name: Name = None,
-        resolver_endpoint_type: ResolverEndpointType = None,
-        update_ip_addresses: UpdateIpAddresses = None,
-        protocols: ProtocolList = None,
+        name: Name | None = None,
+        resolver_endpoint_type: ResolverEndpointType | None = None,
+        update_ip_addresses: UpdateIpAddresses | None = None,
+        protocols: ProtocolList | None = None,
         **kwargs,
     ) -> UpdateResolverEndpointResponse:
         raise NotImplementedError

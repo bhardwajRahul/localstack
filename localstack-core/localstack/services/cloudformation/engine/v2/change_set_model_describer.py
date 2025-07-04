@@ -6,9 +6,11 @@ from typing import Final, Optional
 import localstack.aws.api.cloudformation as cfn_api
 from localstack.services.cloudformation.engine.v2.change_set_model import (
     NodeIntrinsicFunction,
+    NodeProperty,
     NodeResource,
-    NodeTemplate,
+    NodeResources,
     PropertiesKey,
+    is_nothing,
 )
 from localstack.services.cloudformation.engine.v2.change_set_model_preproc import (
     ChangeSetModelPreproc,
@@ -16,6 +18,7 @@ from localstack.services.cloudformation.engine.v2.change_set_model_preproc impor
     PreprocProperties,
     PreprocResource,
 )
+from localstack.services.cloudformation.v2.entities import ChangeSet
 
 CHANGESET_KNOWN_AFTER_APPLY: Final[str] = "{{changeSet:KNOWN_AFTER_APPLY}}"
 
@@ -26,13 +29,10 @@ class ChangeSetModelDescriber(ChangeSetModelPreproc):
 
     def __init__(
         self,
-        node_template: NodeTemplate,
-        before_resolved_resources: dict,
+        change_set: ChangeSet,
         include_property_values: bool,
     ):
-        super().__init__(
-            node_template=node_template, before_resolved_resources=before_resolved_resources
-        )
+        super().__init__(change_set=change_set)
         self._include_property_values = include_property_values
         self._changes = list()
 
@@ -41,46 +41,75 @@ class ChangeSetModelDescriber(ChangeSetModelPreproc):
         self.process()
         return self._changes
 
-    def visit_node_intrinsic_function_fn_get_att(
+    def _setup_runtime_cache(self) -> None:
+        # The describer can output {{changeSet:KNOWN_AFTER_APPLY}} values as not every field
+        # is computable at describe time. Until a filtering logic or executor override logic
+        # is available, the describer cannot benefit of previous evaluations to compute
+        # change set resource changes.
+        pass
+
+    def _save_runtime_cache(self) -> None:
+        # The describer can output {{changeSet:KNOWN_AFTER_APPLY}} values as not every field
+        # is computable at describe time. Until a filtering logic or executor override logic
+        # is available, there are no benefits in having the describer saving its runtime cache
+        # for future changes chains.
+        pass
+
+    def _resolve_attribute(self, arguments: str | list[str], select_before: bool) -> str:
+        if select_before:
+            return super()._resolve_attribute(arguments=arguments, select_before=select_before)
+
+        # Replicate AWS's limitations in describing change set's updated values.
+        # Consideration: If we can properly compute the before and after value, why should we
+        #                artificially limit the precision of our output to match AWS's?
+
+        arguments_list: list[str]
+        if isinstance(arguments, str):
+            arguments_list = arguments.split(".")
+        else:
+            arguments_list = arguments
+        logical_name_of_resource = arguments_list[0]
+        attribute_name = arguments_list[1]
+
+        node_resource = self._get_node_resource_for(
+            resource_name=logical_name_of_resource,
+            node_template=self._change_set.update_model.node_template,
+        )
+        node_property: Optional[NodeProperty] = self._get_node_property_for(
+            property_name=attribute_name, node_resource=node_resource
+        )
+        if node_property is not None:
+            property_delta = self.visit(node_property)
+            if property_delta.before == property_delta.after:
+                value = property_delta.after
+            else:
+                value = CHANGESET_KNOWN_AFTER_APPLY
+        else:
+            try:
+                value = self._after_deployed_property_value_of(
+                    resource_logical_id=logical_name_of_resource,
+                    property_name=attribute_name,
+                )
+            except RuntimeError:
+                value = CHANGESET_KNOWN_AFTER_APPLY
+
+        return value
+
+    def visit_node_intrinsic_function_fn_join(
         self, node_intrinsic_function: NodeIntrinsicFunction
     ) -> PreprocEntityDelta:
-        # TODO: If we can properly compute the before and after value, why should we
-        #  artificially limit the precision of our output to match AWS's?
-
-        arguments_delta = self.visit(node_intrinsic_function.arguments)
-        before_argument_list = arguments_delta.before
-        after_argument_list = arguments_delta.after
-
-        before = None
-        if before_argument_list:
-            before_logical_name_of_resource = before_argument_list[0]
-            before_attribute_name = before_argument_list[1]
-            before_node_resource = self._get_node_resource_for(
-                resource_name=before_logical_name_of_resource, node_template=self._node_template
-            )
-            before_node_property = self._get_node_property_for(
-                property_name=before_attribute_name, node_resource=before_node_resource
-            )
-            before_property_delta = self.visit(before_node_property)
-            before = before_property_delta.before
-
-        after = None
-        if after_argument_list:
-            after_logical_name_of_resource = after_argument_list[0]
-            after_attribute_name = after_argument_list[1]
-            after_node_resource = self._get_node_resource_for(
-                resource_name=after_logical_name_of_resource, node_template=self._node_template
-            )
-            after_node_property = self._get_node_property_for(
-                property_name=after_attribute_name, node_resource=after_node_resource
-            )
-            after_property_delta = self.visit(after_node_property)
-            if after_property_delta.before == after_property_delta.after:
-                after = after_property_delta.after
-            else:
-                after = CHANGESET_KNOWN_AFTER_APPLY
-
-        return PreprocEntityDelta(before=before, after=after)
+        # TODO: investigate the behaviour and impact of this logic with the user defining
+        #       {{changeSet:KNOWN_AFTER_APPLY}} string literals as delimiters or arguments.
+        delta = super().visit_node_intrinsic_function_fn_join(
+            node_intrinsic_function=node_intrinsic_function
+        )
+        delta_before = delta.before
+        if isinstance(delta_before, str) and CHANGESET_KNOWN_AFTER_APPLY in delta_before:
+            delta.before = CHANGESET_KNOWN_AFTER_APPLY
+        delta_after = delta.after
+        if isinstance(delta_after, str) and CHANGESET_KNOWN_AFTER_APPLY in delta_after:
+            delta.after = CHANGESET_KNOWN_AFTER_APPLY
+        return delta
 
     def _register_resource_change(
         self,
@@ -120,7 +149,7 @@ class ChangeSetModelDescriber(ChangeSetModelPreproc):
         if before == after:
             # unchanged: nothing to do.
             return
-        if before is not None and after is not None:
+        if not is_nothing(before) and not is_nothing(after):
             # Case: change on same type.
             if before.resource_type == after.resource_type:
                 # Register a Modified if changed.
@@ -150,7 +179,7 @@ class ChangeSetModelDescriber(ChangeSetModelPreproc):
                     before_properties=None,
                     after_properties=after.properties,
                 )
-        elif before is not None:
+        elif not is_nothing(before):
             # Case: removal
             self._register_resource_change(
                 logical_id=name,
@@ -159,7 +188,7 @@ class ChangeSetModelDescriber(ChangeSetModelPreproc):
                 before_properties=before.properties,
                 after_properties=None,
             )
-        elif after is not None:
+        elif not is_nothing(after):
             # Case: addition
             self._register_resource_change(
                 logical_id=name,
@@ -169,11 +198,18 @@ class ChangeSetModelDescriber(ChangeSetModelPreproc):
                 after_properties=after.properties,
             )
 
+    def visit_node_resources(self, node_resources: NodeResources) -> None:
+        for node_resource in node_resources.resources:
+            delta_resource = self.visit(node_resource)
+            self._describe_resource_change(
+                name=node_resource.name, before=delta_resource.before, after=delta_resource.after
+            )
+
     def visit_node_resource(
         self, node_resource: NodeResource
     ) -> PreprocEntityDelta[PreprocResource, PreprocResource]:
         delta = super().visit_node_resource(node_resource=node_resource)
-        self._describe_resource_change(
-            name=node_resource.name, before=delta.before, after=delta.after
-        )
+        after_resource = delta.after
+        if not is_nothing(after_resource) and after_resource.physical_resource_id is None:
+            after_resource.physical_resource_id = CHANGESET_KNOWN_AFTER_APPLY
         return delta

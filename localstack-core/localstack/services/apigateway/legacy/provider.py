@@ -76,6 +76,7 @@ from localstack.aws.api.apigateway import (
     ResourceOwner,
     RestApi,
     RestApis,
+    RoutingMode,
     SecurityPolicy,
     Stage,
     Stages,
@@ -92,7 +93,7 @@ from localstack.aws.api.apigateway import (
     VpcLinks,
 )
 from localstack.aws.connect import connect_to
-from localstack.aws.forwarder import NotImplementedAvoidFallbackError, create_aws_request_context
+from localstack.aws.forwarder import create_aws_request_context
 from localstack.constants import APPLICATION_JSON
 from localstack.services.apigateway.exporter import OpenApiExporter
 from localstack.services.apigateway.helpers import (
@@ -360,7 +361,7 @@ class ApigatewayProvider(ApigatewayApi, ServiceLifecycleHook):
 
             fixed_patch_ops.append(patch_op)
 
-        _patch_api_gateway_entity(rest_api, fixed_patch_ops)
+        patch_api_gateway_entity(rest_api, fixed_patch_ops)
 
         # fix data types after patches have been applied
         endpoint_configs = rest_api.endpoint_configuration or {}
@@ -421,6 +422,7 @@ class ApigatewayProvider(ApigatewayApi, ServiceLifecycleHook):
         mutual_tls_authentication: MutualTlsAuthenticationInput = None,
         ownership_verification_certificate_arn: String = None,
         policy: String = None,
+        routing_mode: RoutingMode = None,
         **kwargs,
     ) -> DomainName:
         if not domain_name:
@@ -451,6 +453,7 @@ class ApigatewayProvider(ApigatewayApi, ServiceLifecycleHook):
             regionalCertificateArn=regional_certificate_arn,
             securityPolicy=SecurityPolicy.TLS_1_2,
             endpointConfiguration=endpoint_configuration,
+            routingMode=routing_mode,
         )
         store.domain_names[domain_name] = domain
         return domain
@@ -622,11 +625,21 @@ class ApigatewayProvider(ApigatewayApi, ServiceLifecycleHook):
                 param = param.replace("~1", "/")
                 if op == "remove":
                     integration_response.response_templates.pop(param)
-                elif op == "add":
+                elif op in ("add", "replace"):
                     integration_response.response_templates[param] = value
 
             elif "/contentHandling" in path and op == "replace":
                 integration_response.content_handling = patch_operation.get("value")
+
+            elif "/selectionPattern" in path and op == "replace":
+                integration_response.selection_pattern = patch_operation.get("value")
+
+        response: IntegrationResponse = integration_response.to_json()
+        # in case it's empty, we still want to pass it on as ""
+        # TODO: add a test case for this
+        response["selectionPattern"] = integration_response.selection_pattern
+
+        return response
 
     def update_resource(
         self,
@@ -684,7 +697,7 @@ class ApigatewayProvider(ApigatewayApi, ServiceLifecycleHook):
                     )
 
         # TODO: test with multiple patch operations which would not be compatible between each other
-        _patch_api_gateway_entity(moto_resource, patch_operations)
+        patch_api_gateway_entity(moto_resource, patch_operations)
 
         # after setting it, mutate the store
         if moto_resource.parent_id != current_parent_id:
@@ -914,7 +927,7 @@ class ApigatewayProvider(ApigatewayApi, ServiceLifecycleHook):
                 ]
 
         # TODO: test with multiple patch operations which would not be compatible between each other
-        _patch_api_gateway_entity(moto_method, applicable_patch_operations)
+        patch_api_gateway_entity(moto_method, applicable_patch_operations)
 
         # if we removed all values of those fields, set them to None so that they're not returned anymore
         if had_req_params and len(moto_method.request_parameters) == 0:
@@ -972,13 +985,98 @@ class ApigatewayProvider(ApigatewayApi, ServiceLifecycleHook):
         method_response = moto_method_response.to_json()
         return method_response
 
-    @handler("UpdateMethodResponse", expand=False)
+    @handler("UpdateMethodResponse")
     def update_method_response(
-        self, context: RequestContext, request: TestInvokeMethodRequest
+        self,
+        context: RequestContext,
+        rest_api_id: String,
+        resource_id: String,
+        http_method: String,
+        status_code: StatusCode,
+        patch_operations: ListOfPatchOperation | None = None,
+        **kwargs,
     ) -> MethodResponse:
-        # this operation is not implemented by moto, but raises a 500 error (instead of a 501).
-        # avoid a fallback to moto and return the 501 to the client directly instead.
-        raise NotImplementedAvoidFallbackError
+        error_messages = []
+        for index, operation in enumerate(patch_operations):
+            op = operation.get("op")
+            if op not in VALID_PATCH_OPERATIONS:
+                error_messages.append(
+                    f"Value '{op}' at 'updateMethodResponseInput.patchOperations.{index + 1}.member.op' "
+                    f"failed to satisfy constraint: Member must satisfy enum value set: [{', '.join(VALID_PATCH_OPERATIONS)}]"
+                )
+
+        if not re.fullmatch(r"[1-5]\d\d", status_code):
+            error_messages.append(
+                f"Value '{status_code}' at 'statusCode' failed to satisfy constraint: "
+                "Member must satisfy regular expression pattern: [1-5]\\d\\d"
+            )
+
+        if error_messages:
+            prefix = f"{len(error_messages)} validation error{'s' if len(error_messages) > 1 else ''} detected: "
+            raise CommonServiceException(
+                code="ValidationException",
+                message=prefix + "; ".join(error_messages),
+            )
+
+        moto_rest_api = get_moto_rest_api(context, rest_api_id)
+        moto_resource = moto_rest_api.resources.get(resource_id)
+        if not moto_resource:
+            raise NotFoundException("Invalid Resource identifier specified")
+
+        moto_method = moto_resource.resource_methods.get(http_method)
+        if not moto_method:
+            raise NotFoundException("Invalid Method identifier specified")
+
+        method_response = moto_method.method_responses.get(status_code)
+        if not method_response:
+            raise NotFoundException("Invalid Response status code specified")
+
+        if method_response.response_models is None:
+            method_response.response_models = {}
+        if method_response.response_parameters is None:
+            method_response.response_parameters = {}
+
+        for patch_operation in patch_operations:
+            op = patch_operation["op"]
+            path = patch_operation["path"]
+            value = patch_operation.get("value")
+
+            if path.startswith("/responseParameters/"):
+                param_name = path.removeprefix("/responseParameters/")
+                if param_name not in method_response.response_parameters and op in (
+                    "replace",
+                    "remove",
+                ):
+                    raise NotFoundException("Invalid parameter name specified")
+                if op in ("add", "replace"):
+                    method_response.response_parameters[param_name] = value == "true"
+                elif op == "remove":
+                    method_response.response_parameters.pop(param_name)
+
+            elif path.startswith("/responseModels/"):
+                param_name = path.removeprefix("/responseModels/")
+                param_name = param_name.replace("~1", "/")
+                if param_name not in method_response.response_models and op in (
+                    "replace",
+                    "remove",
+                ):
+                    raise NotFoundException("Content-Type specified was not found")
+                if op in ("add", "replace"):
+                    method_response.response_models[param_name] = value
+                elif op == "remove":
+                    method_response.response_models.pop(param_name)
+            else:
+                raise BadRequestException(f"Invalid patch path {path}")
+
+        response: MethodResponse = method_response.to_json()
+
+        # AWS doesn't send back empty responseParameters or responseModels
+        if not method_response.response_parameters:
+            response.pop("responseParameters")
+        if not method_response.response_models:
+            response.pop("responseModels")
+
+        return response
 
     # stages
 
@@ -1074,7 +1172,7 @@ class ApigatewayProvider(ApigatewayApi, ServiceLifecycleHook):
             if patch_path == "/tracingEnabled" and (value := patch_operation.get("value")):
                 patch_operation["value"] = value and value.lower() == "true" or False
 
-        _patch_api_gateway_entity(moto_stage, patch_operations)
+        patch_api_gateway_entity(moto_stage, patch_operations)
         moto_stage.apply_operations(patch_operations)
 
         response = moto_stage.to_json()
@@ -1464,7 +1562,7 @@ class ApigatewayProvider(ApigatewayApi, ServiceLifecycleHook):
         if not result:
             raise NotFoundException(f"Documentation version not found: {documentation_version}")
 
-        _patch_api_gateway_entity(result, patch_operations)
+        patch_api_gateway_entity(result, patch_operations)
 
         return result
 
@@ -2011,7 +2109,7 @@ class ApigatewayProvider(ApigatewayApi, ServiceLifecycleHook):
             raise NotFoundException("Invalid Integration identifier specified")
 
         integration = method.method_integration
-        _patch_api_gateway_entity(integration, patch_operations)
+        patch_api_gateway_entity(integration, patch_operations)
 
         # fix data types
         if integration.timeout_in_millis:
@@ -2046,17 +2144,39 @@ class ApigatewayProvider(ApigatewayApi, ServiceLifecycleHook):
         status_code: StatusCode,
         **kwargs,
     ) -> IntegrationResponse:
+        if not re.fullmatch(r"[1-5]\d\d", status_code):
+            raise CommonServiceException(
+                code="ValidationException",
+                message=f"1 validation error detected: Value '{status_code}' at 'statusCode' failed to "
+                f"satisfy constraint: Member must satisfy regular expression pattern: [1-5]\\d\\d",
+            )
+        try:
+            moto_rest_api = get_moto_rest_api(context, rest_api_id)
+        except NotFoundException:
+            raise NotFoundException("Invalid Resource identifier specified")
+
+        if not (moto_resource := moto_rest_api.resources.get(resource_id)):
+            raise NotFoundException("Invalid Resource identifier specified")
+
+        if not (moto_method := moto_resource.resource_methods.get(http_method)):
+            raise NotFoundException("Invalid Method identifier specified")
+
+        if not moto_method.method_integration:
+            raise NotFoundException("Invalid Integration identifier specified")
+        if not (
+            integration_responses := moto_method.method_integration.integration_responses
+        ) or not (integration_response := integration_responses.get(status_code)):
+            raise NotFoundException("Invalid Response status code specified")
+
         response: IntegrationResponse = call_moto(context)
         remove_empty_attributes_from_integration_response(response)
         # moto does not return selectionPattern is set to an empty string
         # TODO: fix upstream
-        if "selectionPattern" not in response:
-            moto_rest_api = get_moto_rest_api(context, rest_api_id)
-            moto_resource = moto_rest_api.resources.get(resource_id)
-            method_integration = moto_resource.resource_methods[http_method].method_integration
-            integration_response = method_integration.integration_responses[status_code]
-            if integration_response.selection_pattern is not None:
-                response["selectionPattern"] = integration_response.selection_pattern
+        if (
+            "selectionPattern" not in response
+            and integration_response.selection_pattern is not None
+        ):
+            response["selectionPattern"] = integration_response.selection_pattern
         return response
 
     @handler("PutIntegrationResponse", expand=False)
@@ -2065,7 +2185,19 @@ class ApigatewayProvider(ApigatewayApi, ServiceLifecycleHook):
         context: RequestContext,
         request: PutIntegrationResponseRequest,
     ) -> IntegrationResponse:
-        moto_rest_api = get_moto_rest_api(context=context, rest_api_id=request.get("restApiId"))
+        status_code = request.get("statusCode")
+        if not re.fullmatch(r"[1-5]\d\d", status_code):
+            raise CommonServiceException(
+                code="ValidationException",
+                message=f"1 validation error detected: Value '{status_code}' at 'statusCode' failed to "
+                f"satisfy constraint: Member must satisfy regular expression pattern: [1-5]\\d\\d",
+            )
+        try:
+            # put integration response doesn't return the right exception compared to AWS
+            moto_rest_api = get_moto_rest_api(context=context, rest_api_id=request.get("restApiId"))
+        except NotFoundException:
+            raise NotFoundException("Invalid Resource identifier specified")
+
         moto_resource = moto_rest_api.resources.get(request.get("resourceId"))
         if not moto_resource:
             raise NotFoundException("Invalid Resource identifier specified")
@@ -2617,7 +2749,7 @@ class ApigatewayProvider(ApigatewayApi, ServiceLifecycleHook):
                                 f"Invalid null or empty value in {param_type}"
                             )
 
-        _patch_api_gateway_entity(patched_entity, patch_operations)
+        patch_api_gateway_entity(patched_entity, patch_operations)
 
         return patched_entity
 
@@ -2739,7 +2871,7 @@ def create_custom_context(
     return ctx
 
 
-def _patch_api_gateway_entity(entity: Any, patch_operations: ListOfPatchOperation):
+def patch_api_gateway_entity(entity: Any, patch_operations: ListOfPatchOperation):
     patch_operations = patch_operations or []
 
     if isinstance(entity, dict):

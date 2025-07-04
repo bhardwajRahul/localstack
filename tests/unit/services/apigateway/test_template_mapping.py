@@ -13,9 +13,12 @@ from localstack.services.apigateway.next_gen.execute_api.template_mapping import
     VelocityUtilApiGateway,
 )
 from localstack.services.apigateway.next_gen.execute_api.variables import (
+    ContextVariableOverrides,
     ContextVariables,
     ContextVarsAuthorizer,
     ContextVarsIdentity,
+    ContextVarsRequestOverride,
+    ContextVarsResponseOverride,
 )
 
 
@@ -91,12 +94,42 @@ class TestApiGatewayVtlTemplate:
     def test_apply_template_no_json_payload(self):
         variables = MappingTemplateVariables(input=MappingTemplateInput(body='"#foobar123"'))
 
+        template = "$input.json('$.message')"
+        rendered_request = ApiGatewayVtlTemplate().render_vtl(
+            template=template, variables=variables
+        )
+
+        assert rendered_request == '""'
+
+    def test_apply_template_no_json_payload_non_quoted(self):
+        variables = MappingTemplateVariables(input=MappingTemplateInput(body="not json"))
+
+        template = "$input.json('$.message')"
+        rendered_request = ApiGatewayVtlTemplate().render_vtl(
+            template=template, variables=variables
+        )
+
+        assert rendered_request == '""'
+
+    def test_apply_template_no_json_payload_nested(self):
+        variables = MappingTemplateVariables(input=MappingTemplateInput(body='"#foobar123"'))
+
+        template = "$input.json('$.message').testAccess"
+        rendered_request = ApiGatewayVtlTemplate().render_vtl(
+            template=template, variables=variables
+        )
+
+        assert rendered_request == ""
+
+    def test_apply_template_no_json_payload_escaped(self):
+        variables = MappingTemplateVariables(input=MappingTemplateInput(body='"#foobar123"'))
+
         template = "$util.escapeJavaScript($input.json('$.message'))"
         rendered_request = ApiGatewayVtlTemplate().render_vtl(
             template=template, variables=variables
         )
 
-        assert "[]" == rendered_request
+        assert rendered_request == '\\"\\"'
 
     @pytest.mark.parametrize("format", [APPLICATION_JSON, APPLICATION_XML])
     def test_render_custom_template(self, format):
@@ -118,13 +151,18 @@ class TestApiGatewayVtlTemplate:
             ),
             stageVariables={"stageVariable1": "value1", "stageVariable2": "value2"},
         )
+        context_overrides = ContextVariableOverrides(
+            requestOverride=ContextVarsRequestOverride(header={}, path={}, querystring={}),
+            responseOverride=ContextVarsResponseOverride(header={}, status=0),
+        )
 
         template = TEMPLATE_JSON if format == APPLICATION_JSON else TEMPLATE_XML
         template += REQUEST_OVERRIDE
 
-        rendered_request, request_override = ApiGatewayVtlTemplate().render_request(
-            template=template, variables=variables
+        rendered_request, context_variable = ApiGatewayVtlTemplate().render_request(
+            template=template, variables=variables, context_overrides=context_overrides
         )
+        request_override = context_variable["requestOverride"]
         if format == APPLICATION_JSON:
             rendered_request = json.loads(rendered_request)
             assert rendered_request.get("body") == {"spam": "eggs"}
@@ -196,12 +234,15 @@ class TestApiGatewayVtlTemplate:
             ),
             stageVariables={"stageVariable1": "value1", "stageVariable2": "value2"},
         )
-
+        context_overrides = ContextVariableOverrides(
+            requestOverride=ContextVarsRequestOverride(header={}, path={}, querystring={}),
+            responseOverride=ContextVarsResponseOverride(header={}, status=0),
+        )
         template = TEMPLATE_JSON if format == APPLICATION_JSON else TEMPLATE_XML
         template += RESPONSE_OVERRIDE
 
         rendered_response, response_override = ApiGatewayVtlTemplate().render_response(
-            template=template, variables=variables
+            template=template, variables=variables, context_overrides=context_overrides
         )
         if format == APPLICATION_JSON:
             rendered_response = json.loads(rendered_response)
@@ -253,6 +294,26 @@ class TestApiGatewayVtlTemplate:
         )
 
         assert rendered_request == "%7B%7D"
+
+    def test_input_path_empty_body(self):
+        variables = MappingTemplateVariables(input=MappingTemplateInput(body=""))
+
+        template = '$input.path("$.myVar")'
+        rendered_request = ApiGatewayVtlTemplate().render_vtl(
+            template=template, variables=variables
+        )
+
+        assert rendered_request == ""
+
+    def test_input_path_not_json_body(self):
+        variables = MappingTemplateVariables(input=MappingTemplateInput(body="not json"))
+
+        template = '$input.path("$.myVar")'
+        rendered_request = ApiGatewayVtlTemplate().render_vtl(
+            template=template, variables=variables
+        )
+
+        assert rendered_request == ""
 
 
 TEMPLATE_JSON = """

@@ -21,6 +21,7 @@ from pytest_httpserver import HTTPServer
 from werkzeug import Request, Response
 
 from localstack import config
+from localstack.aws.api.ec2 import CreateSecurityGroupRequest
 from localstack.aws.connect import ServiceLevelClientFactory
 from localstack.services.stores import (
     AccountRegionBundle,
@@ -42,7 +43,7 @@ from localstack.utils.aws.arns import get_partition
 from localstack.utils.aws.client import SigningHttpClient
 from localstack.utils.aws.resources import create_dynamodb_table
 from localstack.utils.bootstrap import is_api_enabled
-from localstack.utils.collections import ensure_list
+from localstack.utils.collections import ensure_list, select_from_typed_dict
 from localstack.utils.functions import call_safe, run_safe
 from localstack.utils.http import safe_requests as requests
 from localstack.utils.id_generator import ResourceIdentifier, localstack_id_manager
@@ -791,11 +792,10 @@ def wait_for_delivery_stream_ready(aws_client):
 
 @pytest.fixture
 def wait_for_dynamodb_stream_ready(aws_client):
-    def _wait_for_stream_ready(stream_arn: str):
+    def _wait_for_stream_ready(stream_arn: str, client=None):
         def is_stream_ready():
-            describe_stream_response = aws_client.dynamodbstreams.describe_stream(
-                StreamArn=stream_arn
-            )
+            ddb_client = client or aws_client.dynamodbstreams
+            describe_stream_response = ddb_client.describe_stream(StreamArn=stream_arn)
             return describe_stream_response["StreamDescription"]["StreamStatus"] == "ENABLED"
 
         return poll_condition(is_stream_ready)
@@ -2001,26 +2001,38 @@ def setup_sender_email_address(ses_verify_identity):
 def ec2_create_security_group(aws_client):
     ec2_sgs = []
 
-    def factory(ports=None, **kwargs):
+    def factory(ports=None, ip_protocol: str = "tcp", **kwargs):
+        """
+        Create the target group and authorize the security group ingress.
+        :param ports: list of ports to be authorized for the ingress rule.
+        :param ip_protocol: the ip protocol for the permissions (tcp by default)
+        """
         if "GroupName" not in kwargs:
-            kwargs["GroupName"] = f"test-sg-{short_uid()}"
-        security_group = aws_client.ec2.create_security_group(**kwargs)
+            # FIXME: This will fail against AWS since the sg prefix is not valid for GroupName
+            # > "Group names may not be in the format sg-*".
+            kwargs["GroupName"] = f"sg-{short_uid()}"
+        # Making sure the call to CreateSecurityGroup gets the right arguments
+        _args = select_from_typed_dict(CreateSecurityGroupRequest, kwargs)
+        security_group = aws_client.ec2.create_security_group(**_args)
+        security_group_id = security_group["GroupId"]
 
+        # FIXME: If 'ports' is None or an empty list, authorize_security_group_ingress will fail due to missing IpPermissions.
+        # Must ensure ports are explicitly provided or skip authorization entirely if not required.
         permissions = [
             {
                 "FromPort": port,
-                "IpProtocol": "tcp",
+                "IpProtocol": ip_protocol,
                 "IpRanges": [{"CidrIp": "0.0.0.0/0"}],
                 "ToPort": port,
             }
             for port in ports or []
         ]
         aws_client.ec2.authorize_security_group_ingress(
-            GroupName=kwargs["GroupName"],
+            GroupId=security_group_id,
             IpPermissions=permissions,
         )
 
-        ec2_sgs.append(security_group["GroupId"])
+        ec2_sgs.append(security_group_id)
         return security_group
 
     yield factory
@@ -2177,29 +2189,6 @@ def create_rest_apigw_openapi(aws_client_factory):
         with contextlib.suppress(Exception):
             apigateway_client = aws_client_factory(region_name=region_name).apigateway
             apigateway_client.delete_rest_api(restApiId=rest_api_id)
-
-
-@pytest.fixture
-def appsync_create_api(aws_client):
-    graphql_apis = []
-
-    def factory(**kwargs):
-        if "name" not in kwargs:
-            kwargs["name"] = f"graphql-api-testing-name-{short_uid()}"
-        if not kwargs.get("authenticationType"):
-            kwargs["authenticationType"] = "API_KEY"
-
-        result = aws_client.appsync.create_graphql_api(**kwargs)["graphqlApi"]
-        graphql_apis.append(result["apiId"])
-        return result
-
-    yield factory
-
-    for api in graphql_apis:
-        try:
-            aws_client.appsync.delete_graphql_api(apiId=api)
-        except Exception as e:
-            LOG.debug("Error cleaning up AppSync API: %s, %s", api, e)
 
 
 @pytest.fixture
