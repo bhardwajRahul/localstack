@@ -12,6 +12,7 @@ from abc import ABCMeta, abstractmethod
 from enum import Enum, unique
 from pathlib import Path
 from typing import (
+    Callable,
     Dict,
     List,
     Literal,
@@ -589,9 +590,20 @@ class DockerRunFlags:
     dns: Optional[List[str]]
 
 
+class RegistryResolverStrategy(Protocol):
+    def resolve(self, image_name: str) -> str: ...
+
+
+class HardCodedResolver:
+    def resolve(self, image_name: str) -> str:  # noqa
+        return image_name
+
+
 # TODO: remove Docker/Podman compatibility switches (in particular strip_wellknown_repo_prefixes=...)
 #  from the container client base interface and introduce derived Podman client implementations instead!
 class ContainerClient(metaclass=ABCMeta):
+    registry_resolver_strategy: RegistryResolverStrategy = HardCodedResolver()
+
     @abstractmethod
     def get_system_info(self) -> dict:
         """Returns the docker system-wide information as dictionary (``docker info``)."""
@@ -739,8 +751,17 @@ class ContainerClient(metaclass=ABCMeta):
         """Copy contents of the given container to the host"""
 
     @abstractmethod
-    def pull_image(self, docker_image: str, platform: Optional[DockerPlatform] = None) -> None:
-        """Pulls an image with a given name from a Docker registry"""
+    def pull_image(
+        self,
+        docker_image: str,
+        platform: Optional[DockerPlatform] = None,
+        log_handler: Optional[Callable[[str], None]] = None,
+    ) -> None:
+        """
+        Pulls an image with a given name from a Docker registry
+
+        :log_handler: Optional parameter that can be used to process the logs. Logs will be streamed if possible, but this is not guaranteed.
+        """
 
     @abstractmethod
     def push_image(self, docker_image: str) -> None:

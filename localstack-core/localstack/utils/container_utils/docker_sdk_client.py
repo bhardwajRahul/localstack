@@ -8,7 +8,7 @@ import socket
 import threading
 from functools import lru_cache
 from time import sleep
-from typing import Dict, List, Optional, Tuple, Union, cast
+from typing import Callable, Dict, List, Optional, Tuple, Union, cast
 from urllib.parse import quote
 
 import docker
@@ -334,11 +334,26 @@ class SdkDockerClient(ContainerClient):
         except APIError as e:
             raise ContainerException() from e
 
-    def pull_image(self, docker_image: str, platform: Optional[DockerPlatform] = None) -> None:
+    def pull_image(
+        self,
+        docker_image: str,
+        platform: Optional[DockerPlatform] = None,
+        log_handler: Optional[Callable[[str], None]] = None,
+    ) -> None:
         LOG.debug("Pulling Docker image: %s", docker_image)
         # some path in the docker image string indicates a custom repository
+
+        docker_image = self.registry_resolver_strategy.resolve(docker_image)
+        kwargs: Dict[str, Union[str, bool]] = {"platform": platform}
         try:
-            self.client().images.pull(docker_image, platform=platform)
+            if log_handler:
+                # Use a lower-level API, as the 'stream' argument is not available in the higher-level `pull`-API
+                kwargs["stream"] = True
+                stream = self.client().api.pull(docker_image, **kwargs)
+                for line in stream:
+                    log_handler(to_str(line))
+            else:
+                self.client().images.pull(docker_image, **kwargs)
         except ImageNotFound:
             raise NoSuchImage(docker_image)
         except APIError as e:
@@ -465,6 +480,7 @@ class SdkDockerClient(ContainerClient):
         pull: bool = True,
         strip_wellknown_repo_prefixes: bool = True,
     ) -> Dict[str, Union[dict, list, str]]:
+        image_name = self.registry_resolver_strategy.resolve(image_name)
         try:
             result = self.client().images.get(image_name).attrs
             if strip_wellknown_repo_prefixes:
@@ -777,6 +793,8 @@ class SdkDockerClient(ContainerClient):
             mounts = None
             if volumes:
                 mounts = Util.convert_mount_list_to_dict(volumes)
+
+            image_name = self.registry_resolver_strategy.resolve(image_name)
 
             def create_container():
                 return self.client().containers.create(
